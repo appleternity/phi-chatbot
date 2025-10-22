@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+
+# Generated embeddings (too large for git)
+data/embeddings/
+*.pkl
+*.npy
+
+# Coverage and testing
+.coverage
+htmlcov/
+.pytest_cache/
+.pytest_llm_cache.db
+.pytest_llm_cache.db-*
+.pytest_checkpoint.db
+.pytest_checkpoint.db-*
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Distribution / packaging
+.Python
+build/
+dist/
+*.egg-info/
+
+data
