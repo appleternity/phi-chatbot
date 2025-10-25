@@ -1,7 +1,7 @@
 """Abstract document retriever interface and implementations."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -23,6 +23,10 @@ class Document:
     content: str
     metadata: dict
     id: Optional[str] = None
+    parent_id: Optional[str] = None  # Reference to parent chunk
+    child_ids: List[str] = field(default_factory=list)  # Child chunk IDs
+    timestamp_start: Optional[str] = None  # "00:01:23.456"
+    timestamp_end: Optional[str] = None  # "00:01:45.789"
 
 
 class DocumentRetriever(ABC):

@@ -28,9 +28,11 @@ class Settings(BaseSettings):
     embedding_dim: int = 384
 
     # Embedding Persistence Settings
-    index_path: str = "data/embeddings/"  # Path to persistent index storage
-    use_persistent_index: bool = True  # Enable/disable loading from persistent index
-    force_recompute: bool = False  # Force re-computation of embeddings (development flag)
+    # IMPORTANT: Embeddings must be pre-computed before starting the service
+    # Run: python -m src.precompute_embeddings (for medical docs)
+    # Run: python -m src.precompute_parenting_embeddings --force (for parenting videos)
+    index_path: str = "data/embeddings/"  # Path to pre-computed medical embeddings
+    parenting_index_path: str = "data/parenting_index"  # Path to pre-computed parenting embeddings
 
     # Retrieval Settings
     top_k_documents: int = 3

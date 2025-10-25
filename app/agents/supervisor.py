@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class AgentClassification(BaseModel):
     """Structured output for agent classification."""
 
-    agent: Literal["emotional_support", "rag_agent"] = Field(
+    agent: Literal["emotional_support", "rag_agent", "parenting"] = Field(
         description="The agent to assign based on user intent"
     )
     reasoning: str = Field(description="Brief explanation of why this agent was chosen")
@@ -29,7 +29,7 @@ llm = create_llm(temperature=0.1)
 
 def supervisor_node(
     state: MedicalChatState,
-) -> Command[Literal["emotional_support", "rag_agent"]]:
+) -> Command[Literal["emotional_support", "rag_agent", "parenting"]]:
     """Supervisor agent that classifies user intent and assigns appropriate agent.
 
     This node only runs on the first message in a session.
