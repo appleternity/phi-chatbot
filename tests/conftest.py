@@ -1,5 +1,10 @@
 """Pytest configuration and fixtures."""
 
+# CRITICAL: Set TESTING environment variable BEFORE any app imports
+# This ensures FakeChatModel is used instead of ChatOpenAI
+import os
+os.environ["TESTING"] = "true"
+
 import pytest
 import asyncio
 import time
@@ -7,8 +12,12 @@ from typing import List
 from pathlib import Path
 import logging
 from app.core.retriever import FAISSRetriever, Document
+from app.core.hybrid_retriever import HybridRetriever
+from app.core.reranker import CrossEncoderReranker
 from app.core.session_store import InMemorySessionStore
 from app.config import settings
+import numpy as np
+from scipy.sparse import csr_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -129,27 +138,18 @@ Side Effects: Insomnia, dry mouth
 
 @pytest.fixture(scope="session")
 async def session_retriever() -> FAISSRetriever:
-    """Load model once for entire test session (fail-fast, no fallback).
+    """Create session-scoped retriever for tests.
 
     Session scope ensures model is loaded only once per test session.
-    If use_persistent_index=True, will load from disk or raise exception.
-    If use_persistent_index=False or force_recompute=True, computes fresh.
+    Uses in-memory sample documents for fast, isolated testing.
+
+    For integration tests that need production data, use a separate
+    fixture that loads from pre-computed indices.
 
     Returns:
-        FAISSRetriever instance with loaded model and index
+        FAISSRetriever instance with sample test documents
     """
-    if settings.use_persistent_index and not settings.force_recompute:
-        # Load from disk - will raise exception if not found or corrupted
-        logger.info(f"Loading retriever from persistent index: {settings.index_path}")
-        retriever = await FAISSRetriever.load_index(
-            path=settings.index_path,
-            embedding_model=settings.embedding_model
-        )
-        logger.info("Successfully loaded retriever from disk")
-        return retriever
-
-    # Compute fresh from sample documents
-    logger.info("Computing fresh retriever (force_recompute=True or persistence disabled)")
+    logger.info("Creating test retriever with sample documents...")
 
     retriever = FAISSRetriever(embedding_model=settings.embedding_model)
 
@@ -180,9 +180,37 @@ Side Effects: Insomnia, dry mouth
     ]
 
     await retriever.add_documents(sample_docs)
-    logger.info(f"Initialized retriever with {len(sample_docs)} sample documents")
+    logger.info(f"✅ Initialized test retriever with {len(sample_docs)} sample documents")
 
     return retriever
+
+
+@pytest.fixture(scope="session")
+async def production_retriever() -> FAISSRetriever:
+    """Load production retriever from pre-computed embeddings.
+
+    This fixture is for integration tests that need the full production index.
+    Requires embeddings to be pre-computed using:
+        python -m src.precompute_embeddings
+
+    Returns:
+        FAISSRetriever with production medical documents
+
+    Raises:
+        FileNotFoundError: If embeddings not pre-computed
+    """
+    logger.info(f"Loading production retriever from: {settings.index_path}")
+    try:
+        retriever = await FAISSRetriever.load_index(
+            path=settings.index_path,
+            embedding_model=settings.embedding_model
+        )
+        logger.info("✅ Successfully loaded production retriever from disk")
+        return retriever
+    except FileNotFoundError:
+        logger.error(f"❌ Production embeddings not found at: {settings.index_path}")
+        logger.error("💡 Please run: python -m src.precompute_embeddings")
+        raise
 
 
 @pytest.fixture
@@ -245,3 +273,169 @@ def test_checkpointer(session_checkpointer):
     session-scoped MemorySaver for performance.
     """
     return session_checkpointer
+
+
+@pytest.fixture(scope="session")
+async def parenting_sample_documents() -> List[Document]:
+    """Create sample parenting documents for testing.
+
+    Returns:
+        List of sample parenting advice documents
+    """
+    return [
+        Document(
+            id="test-sleep-training",
+            content="""
+Sleep Training for Toddlers (18-36 months)
+
+Establish a consistent bedtime routine:
+1. Bath time at 7:00 PM
+2. Quiet story reading for 15 minutes
+3. Lights out by 7:30 PM
+
+Key principles:
+- Consistency is crucial for success
+- Allow child to self-soothe
+- Respond to distress but avoid reinforcing wake-ups
+- Expected adjustment period: 3-7 days
+
+Red flags requiring pediatrician consultation:
+- Persistent night terrors
+- Breathing irregularities
+- Excessive crying (>30 minutes)
+            """.strip(),
+            metadata={
+                "source": "Sleep Foundation Expert Guide",
+                "age_range": "18-36 months",
+                "category": "sleep",
+            },
+        ),
+        Document(
+            id="test-tantrums",
+            content="""
+Managing Toddler Tantrums (2-4 years)
+
+Understanding tantrum triggers:
+- Frustration from limited communication skills
+- Fatigue or hunger
+- Desire for independence vs. capability gap
+- Overstimulation
+
+Effective response strategies:
+1. Stay calm and regulate your own emotions
+2. Validate their feelings: "I see you're upset"
+3. Offer limited choices to restore sense of control
+4. Use distraction when appropriate
+5. Set clear, consistent boundaries
+
+Prevention techniques:
+- Maintain regular sleep and meal schedules
+- Give advance warnings before transitions
+- Teach emotion words and coping strategies
+            """.strip(),
+            metadata={
+                "source": "Child Development Institute",
+                "age_range": "2-4 years",
+                "category": "behavior",
+            },
+        ),
+        Document(
+            id="test-potty-training",
+            content="""
+Potty Training Readiness (24-36 months)
+
+Signs of readiness:
+- Stays dry for 2+ hours
+- Shows interest in toilet/underwear
+- Can follow simple instructions
+- Communicates need to go
+
+Step-by-step approach:
+1. Let child observe and learn
+2. Read potty training books together
+3. Start with scheduled bathroom visits
+4. Use positive reinforcement, never punishment
+5. Expect accidents - they're part of learning
+
+Timeline expectations:
+- Daytime training: 3-6 months average
+- Nighttime dryness: May take additional 6-12 months
+- Each child progresses at their own pace
+            """.strip(),
+            metadata={
+                "source": "American Academy of Pediatrics",
+                "age_range": "24-36 months",
+                "category": "development",
+            },
+        ),
+    ]
+
+
+@pytest.fixture(scope="session")
+async def session_parenting_retriever(parenting_sample_documents: List[Document]) -> HybridRetriever:
+    """Create session-scoped parenting retriever for tests.
+
+    Session scope ensures embeddings are computed only once per test session.
+    Uses in-memory sample parenting documents for fast, isolated testing.
+
+    Returns:
+        HybridRetriever instance with sample parenting documents
+    """
+    logger.info("Creating test parenting retriever with sample documents...")
+
+    # Create FAISS retriever for parenting documents
+    faiss_retriever = FAISSRetriever(embedding_model=settings.embedding_model)
+    await faiss_retriever.add_documents(parenting_sample_documents)
+
+    # Create hybrid retriever (50/50 vector and keyword search)
+    retriever = HybridRetriever(
+        faiss_retriever=faiss_retriever,
+        documents=parenting_sample_documents,
+        alpha=0.5
+    )
+
+    logger.info(f"✅ Initialized test parenting retriever with {len(parenting_sample_documents)} sample documents")
+    return retriever
+
+
+@pytest.fixture
+async def parenting_retriever(session_parenting_retriever: HybridRetriever) -> HybridRetriever:
+    """Provide parenting retriever for individual tests.
+
+    Reuses the session parenting retriever for performance.
+
+    Returns:
+        HybridRetriever instance ready for testing
+    """
+    return session_parenting_retriever
+
+
+@pytest.fixture(scope="session")
+def session_parenting_reranker() -> CrossEncoderReranker:
+    """Create session-scoped parenting reranker for tests.
+
+    Session scope ensures model is loaded only once per test session.
+    Uses default cross-encoder model for testing.
+
+    Returns:
+        CrossEncoderReranker instance for testing
+    """
+    logger.info("Creating test parenting reranker...")
+
+    # Use default model (cross-encoder/ms-marco-MiniLM-L-6-v2)
+    reranker = CrossEncoderReranker()
+
+    logger.info("✅ Initialized test parenting reranker")
+    return reranker
+
+
+@pytest.fixture
+def parenting_reranker(session_parenting_reranker: CrossEncoderReranker) -> CrossEncoderReranker:
+    """Provide parenting reranker for individual tests.
+
+    Reuses the session parenting reranker for performance.
+
+    Returns:
+        CrossEncoderReranker instance ready for testing
+    """
+    return session_parenting_reranker
