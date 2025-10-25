@@ -21,7 +21,35 @@ Edit `.env` and add your OpenRouter API key:
 OPENAI_API_KEY=your-key-here
 ```
 
-### 3. Run the Server
+### 3. Pre-compute Embeddings (Required)
+
+**⚠️ IMPORTANT**: You must pre-compute embeddings before first run. This takes 10-30 seconds once, then startup is <1 second.
+
+```bash
+# Pre-compute medical document embeddings
+python -m src.precompute_embeddings
+
+# Pre-compute parenting video embeddings (if using parenting agent)
+python -m src.precompute_parenting_embeddings --force
+```
+
+Expected output:
+```
+🚀 Starting embedding pre-computation...
+   Model: sentence-transformers/all-MiniLM-L6-v2
+   Output: data/embeddings/
+📚 Loading documents...
+   ✓ Loaded 5 documents
+🔢 Computing embeddings...
+   ✓ Computed embeddings for 5 documents
+💾 Saving artifacts...
+   ✓ Saved FAISS index, documents, embeddings, metadata
+🎉 Pre-computation completed successfully!
+```
+
+These embeddings are saved to disk and loaded instantly on every server startup.
+
+### 4. Run the Server
 
 ```bash
 uvicorn app.main:app --reload --port 8000
@@ -31,11 +59,16 @@ You should see:
 ```
 🚀 Initializing Medical Chatbot application...
 ✅ Session store initialized
-📚 Loading medical documents...
-✅ Loaded 5 medical documents into retriever
-✅ Medical chatbot graph compiled
+📚 Loading pre-computed medical document embeddings...
+✅ Loaded pre-computed medical embeddings from disk
+📊 Index contains 5 documents
+📚 Loading pre-computed parenting knowledge base...
+✅ Loaded parenting knowledge base: 2,847 chunks
+✅ Medical chatbot graph compiled with all agents
 🎉 Application startup complete!
 ```
+
+Startup time: **<1 second** (thanks to pre-computed embeddings!)
 
 ### 4. Test It!
 

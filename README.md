@@ -18,7 +18,11 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
 
-# 3. Run the server
+# 3. Pre-compute embeddings (required before first run)
+python -m src.precompute_embeddings
+python -m src.precompute_parenting_embeddings --force
+
+# 4. Run the server
 uvicorn app.main:app --reload --port 8000
 ```
 

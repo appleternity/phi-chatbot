@@ -47,6 +47,10 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your API keys
 
+# Pre-compute embeddings (required before first run)
+python -m src.precompute_embeddings
+python -m src.precompute_parenting_embeddings --force
+
 # Run backend
 uvicorn app.main:app --reload --port 8000
 ```
@@ -92,9 +96,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
+# Copy application code and data
 COPY app/ ./app/
+COPY src/ ./src/
 COPY data/ ./data/
+
+# Pre-compute embeddings during build (fast startup)
+# This runs once during build, not on every container start
+RUN python -m src.precompute_embeddings && \
+    python -m src.precompute_parenting_embeddings --force
 
 # Expose port
 EXPOSE 8000
@@ -102,6 +112,8 @@ EXPOSE 8000
 # Run application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
+
+**Important**: Embeddings are baked into the image during build. If you update source data files, rebuild the image.
 
 Build and run:
 
