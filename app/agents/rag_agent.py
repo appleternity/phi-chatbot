@@ -2,6 +2,7 @@
 
 from typing import Literal, Annotated
 from langchain_core.tools import tool
+from langchain.agents import create_agent
 from langgraph.prebuilt import create_react_agent, InjectedState
 from langgraph.types import Command
 from langgraph.graph import END
@@ -16,6 +17,31 @@ logger = logging.getLogger(__name__)
 
 # Initialize LLM with low temperature for factual accuracy
 llm = create_llm(temperature=1.0)
+
+
+def _format_retrieved_documents(docs: list) -> str:
+    """Format retrieved documents for LLM consumption.
+
+    This formatting is necessary to provide clear structure and source attribution
+    for the LLM to generate accurate responses.
+
+    Args:
+        docs: List of retrieved documents
+
+    Returns:
+        Markdown-formatted string with document information
+    """
+    if not docs:
+        return "No relevant information found in the knowledge base."
+
+    formatted = "# Retrieved Information\n\n"
+    for i, doc in enumerate(docs, 1):
+        med_name = doc.metadata.get("name", "Unknown")
+        formatted += f"## Source {i}: {med_name}\n\n"
+        formatted += f"{doc.content}\n\n"
+        formatted += "---\n\n"
+
+    return formatted
 
 
 @tool
@@ -40,19 +66,8 @@ async def search_medical_docs(
     retriever: DocumentRetriever = state["retriever"]
     docs = await retriever.search(query, top_k=settings.top_k_documents)
 
-    if not docs:
-        return "No relevant information found in the knowledge base."
-
-    # Format documents for LLM
-    formatted = "# Retrieved Information\n\n"
-    for i, doc in enumerate(docs, 1):
-        med_name = doc.metadata.get("name", "Unknown")
-        formatted += f"## Source {i}: {med_name}\n\n"
-        formatted += f"{doc.content}\n\n"
-        formatted += "---\n\n"
-
     logger.debug(f"Retrieved {len(docs)} documents for query: {query}")
-    return formatted
+    return _format_retrieved_documents(docs)
 
 
 def create_rag_agent(retriever: DocumentRetriever):
@@ -119,3 +134,47 @@ def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
 
     # Return command with response
     return Command(goto=END, update={"messages": response["messages"]})
+
+
+def create_rag_node(retriever: DocumentRetriever):
+    """Factory function to create RAG node with closure-captured dependencies.
+
+    Linus: "Good code has no special cases" - This unified pattern eliminates
+    the serialization problem by capturing non-serializable objects in closure.
+
+    Architecture:
+    - Outer graph uses MemorySaver to checkpoint conversation state (messages, session_id)
+    - rag_agent and retriever are NOT serializable, captured in closure scope
+    - Only serializable data gets persisted to checkpointer
+
+    Args:
+        retriever: Document retriever instance (non-serializable)
+
+    Returns:
+        Node function ready to be added to LangGraph
+    """
+    # Create agent in closure (captured, not checkpointed)
+    rag_agent = create_rag_agent(retriever)
+    logger.debug("RAG agent created and captured in closure")
+
+    def rag_node(state: MedicalChatState) -> Command[Literal[END]]:
+        """RAG node with retriever injected via closure.
+
+        Args:
+            state: Current graph state (serializable only)
+
+        Returns:
+            Command with agent response and updated messages
+        """
+        logger.debug(f"Session {state['session_id']}: RAG agent searching knowledge base")
+
+        # Inject retriever into temporary state (not checkpointed)
+        state_with_retriever = {**state, "retriever": retriever}
+
+        # Invoke agent
+        response = rag_agent.invoke(state_with_retriever)
+
+        # Return only serializable updates
+        return Command(goto=END, update={"messages": response["messages"]})
+
+    return rag_node

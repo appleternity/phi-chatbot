@@ -1,16 +1,20 @@
 """FastAPI application for medical chatbot."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
+import pickle
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from app.models import ChatRequest, ChatResponse, HealthResponse
 from app.config import settings
 from app.core.session_store import SessionStore, InMemorySessionStore, SessionData
-from app.core.retriever import DocumentRetriever, FAISSRetriever
+from app.core.retriever import DocumentRetriever, FAISSRetriever, Document
+from app.core.hybrid_retriever import HybridRetriever
+from app.core.reranker import CrossEncoderReranker
 from app.graph.builder import build_medical_chatbot_graph
 from app.graph.state import MedicalChatState
-from app.utils.data_loader import load_medical_documents
 import logging
+from typing import Optional
 
 # Configure logging
 logging.basicConfig(
@@ -23,54 +27,172 @@ logger = logging.getLogger(__name__)
 app_state = {"graph": None, "session_store": None, "retriever": None}
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup and shutdown."""
-    # Startup
-    logger.info("🚀 Initializing Medical Chatbot application...")
+def _initialize_session_store() -> SessionStore:
+    """Initialize session store.
 
-    # Initialize session store
-    app_state["session_store"] = InMemorySessionStore(ttl_seconds=settings.session_ttl_seconds)
+    Returns:
+        InMemorySessionStore instance
+    """
+    session_store = InMemorySessionStore(ttl_seconds=settings.session_ttl_seconds)
     logger.info("✅ Session store initialized")
+    return session_store
 
-    # Initialize retriever and load documents
-    logger.info("📚 Initializing document retriever...")
 
-    retriever = FAISSRetriever(embedding_model=settings.embedding_model)
+async def _load_medical_retriever() -> DocumentRetriever:
+    """Load pre-computed medical document embeddings from disk.
 
-    # Load from persistent index or compute from source (fail-fast, no fallback)
-    if settings.use_persistent_index and not settings.force_recompute:
-        # Load from disk - will raise exception if not found or corrupted
+    This function ALWAYS loads from disk. Embeddings must be pre-computed
+    using: python -m src.precompute_embeddings
+
+    Returns:
+        FAISSRetriever with loaded embeddings
+
+    Raises:
+        FileNotFoundError: If embeddings not found at settings.index_path
+        ValueError: If embeddings are corrupted or invalid
+    """
+    logger.info("📚 Loading pre-computed medical document embeddings...")
+
+    try:
         retriever = await FAISSRetriever.load_index(
             path=settings.index_path,
             embedding_model=settings.embedding_model
         )
-        logger.info("✅ Loaded pre-computed embeddings from disk")
+        logger.info("✅ Loaded pre-computed medical embeddings from disk")
         logger.info(f"📊 Index contains {len(retriever._documents)} documents")
-    else:
-        # Compute embeddings from source
-        if settings.force_recompute:
-            logger.info("🔄 Force recompute enabled - computing embeddings from source...")
-        else:
-            logger.info("💾 Persistent index disabled - computing embeddings from source...")
+        return retriever
 
-        docs = await load_medical_documents()
-        await retriever.add_documents(docs)
-        logger.info(f"✅ Loaded {len(docs)} medical documents into retriever")
+    except FileNotFoundError as e:
+        logger.error(f"❌ Medical embeddings not found at: {settings.index_path}")
+        logger.error("💡 Please run: python -m src.precompute_embeddings")
+        raise
+    except ValueError as e:
+        logger.error(f"❌ Medical embeddings corrupted: {e}")
+        logger.error("💡 Please re-run: python -m src.precompute_embeddings")
+        raise
 
-    app_state["retriever"] = retriever
 
-    # Build graph
-    app_state["graph"] = build_medical_chatbot_graph(retriever)
-    logger.info("✅ Medical chatbot graph compiled")
+async def _load_parenting_system() -> tuple[HybridRetriever, CrossEncoderReranker]:
+    """Load pre-computed parenting video embeddings and reranker from disk.
 
-    logger.info("🎉 Application startup complete!")
+    Linus: "Fail early, fail loudly, fail with useful error messages"
 
-    yield
+    The parenting agent is REQUIRED for production. This function fails-fast
+    if embeddings are not available, preventing startup with incomplete system.
+
+    To pre-compute embeddings, run:
+        python -m src.precompute_parenting_embeddings --force
+
+    Returns:
+        Tuple of (HybridRetriever, CrossEncoderReranker)
+
+    Raises:
+        FileNotFoundError: If parenting index not found
+        RuntimeError: If parenting index is corrupted or incomplete
+    """
+    logger.info("📚 Loading pre-computed parenting knowledge base...")
+    parenting_index_path = settings.parenting_index_path
+
+    # Fail-fast validation
+    if not Path(parenting_index_path).exists():
+        raise FileNotFoundError(
+            f"Parenting index required but not found at: {parenting_index_path}\n"
+            f"Run: python -m src.precompute_parenting_embeddings --force"
+        )
+
+    try:
+        # Load embeddings
+        import numpy as np
+        from scipy.sparse import load_npz
+
+        dense_embeddings = np.load(f"{parenting_index_path}/dense_embeddings.npy")
+        sparse_embeddings = load_npz(f"{parenting_index_path}/sparse_embeddings.npz")
+
+        # Load documents
+        with open(f"{parenting_index_path}/child_documents.pkl", "rb") as f:
+            child_documents = pickle.load(f)
+
+        # Create hybrid retriever
+        parenting_retriever = HybridRetriever(
+            documents=child_documents,
+            dense_embeddings=dense_embeddings,
+            sparse_embeddings=sparse_embeddings,
+            dense_weight=settings.dense_weight,
+            sparse_weight=settings.sparse_weight,
+        )
+
+        # Initialize reranker
+        parenting_reranker = CrossEncoderReranker(
+            model_name=settings.reranker_model,
+            top_k=settings.reranker_top_k,
+        )
+
+        logger.info(f"✅ Loaded parenting knowledge base: {len(child_documents)} chunks")
+        return parenting_retriever, parenting_reranker
+
+    except FileNotFoundError as e:
+        raise FileNotFoundError(
+            f"Parenting index files incomplete: {e}\n"
+            f"Run: python -m src.precompute_parenting_embeddings --force"
+        ) from e
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to load parenting system: {e}\n"
+            f"Try regenerating: python -m src.precompute_parenting_embeddings --force"
+        ) from e
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown.
+
+    Linus: "Fail early, fail loudly, fail with useful error messages"
+
+    All embeddings MUST be pre-computed before starting the service.
+    This function loads pre-computed indices from disk for fast startup
+    and fails-fast if any required dependencies are missing.
+
+    Required precompute commands:
+        python -m src.precompute_embeddings
+        python -m src.precompute_parenting_embeddings --force
+
+    Raises:
+        FileNotFoundError: If required embeddings not found
+        RuntimeError: If embeddings are corrupted
+    """
+    # Startup
+    logger.info("🚀 Initializing Medical Chatbot application...")
+
+    try:
+        # Initialize session store
+        app_state["session_store"] = _initialize_session_store()
+
+        # Load pre-computed medical embeddings (fail-fast if not found)
+        retriever = await _load_medical_retriever()
+        app_state["retriever"] = retriever
+
+        # Load pre-computed parenting embeddings (fail-fast if not found)
+        parenting_retriever, parenting_reranker = await _load_parenting_system()
+        app_state["parenting_retriever"] = parenting_retriever
+        app_state["parenting_reranker"] = parenting_reranker
+
+        # Build graph with all required dependencies
+        app_state["graph"] = build_medical_chatbot_graph(
+            retriever=retriever,
+            parenting_retriever=parenting_retriever,
+            parenting_reranker=parenting_reranker,
+        )
+        logger.info("✅ Medical chatbot graph compiled with all agents")
+        logger.info("🎉 Application startup complete!")
+
+        yield
+
+    except Exception as e:
+        logger.error(f"❌ Failed to start application: {e}")
+        raise
 
     # Shutdown
     logger.info("👋 Shutting down application...")
-    # Cleanup if needed
 
 
 # Create FastAPI app
@@ -108,7 +230,10 @@ async def health_check():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, session_store: SessionStore = Depends(get_session_store)):
+async def chat(
+    request: ChatRequest,
+    session_store: SessionStore = Depends(get_session_store)
+):
     """Main chat endpoint with session-aware routing.
 
     This endpoint:
