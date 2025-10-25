@@ -7,13 +7,18 @@ from app.core.retriever import FAISSRetriever, Document
 
 
 @pytest.fixture
-def graph_with_mock_data(session_retriever, test_checkpointer):
+def graph_with_mock_data(session_retriever, parenting_retriever, parenting_reranker, test_checkpointer):
     """Create graph with session retriever and checkpointer.
 
     Reuses session_retriever to avoid re-loading the SentenceTransformer model
     (saves ~2.8s per test). The session_retriever already has sample documents.
     """
-    graph = build_medical_chatbot_graph(session_retriever, checkpointer=test_checkpointer)
+    graph = build_medical_chatbot_graph(
+        session_retriever,
+        parenting_retriever,
+        parenting_reranker,
+        checkpointer=test_checkpointer
+    )
     return graph
 
 

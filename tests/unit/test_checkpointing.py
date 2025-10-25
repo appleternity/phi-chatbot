@@ -32,13 +32,20 @@ def test_rag_agent_checkpointer_disabled(session_retriever):
 
 
 @pytest.mark.asyncio
-async def test_graph_checkpoint_excludes_non_serializable(session_retriever, test_checkpointer):
+async def test_graph_checkpoint_excludes_non_serializable(
+    session_retriever, parenting_retriever, parenting_reranker, test_checkpointer
+):
     """Verify checkpointed state excludes retriever and rag_agent.
 
     The closure pattern should ensure these objects are captured in
     closure scope rather than being added to the checkpointed state.
     """
-    graph = build_medical_chatbot_graph(session_retriever, checkpointer=test_checkpointer)
+    graph = build_medical_chatbot_graph(
+        session_retriever,
+        parenting_retriever,
+        parenting_reranker,
+        checkpointer=test_checkpointer
+    )
     config = {"configurable": {"thread_id": "test-checkpoint-exclusion"}}
 
     state = MedicalChatState(
@@ -69,7 +76,9 @@ async def test_graph_checkpoint_excludes_non_serializable(session_retriever, tes
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_state_is_serializable(session_retriever, test_checkpointer):
+async def test_checkpoint_state_is_serializable(
+    session_retriever, parenting_retriever, parenting_reranker, test_checkpointer
+):
     """Verify that checkpointed state can actually be serialized with msgpack.
 
     This is the test that would have caught the original FAISSRetriever
@@ -77,7 +86,12 @@ async def test_checkpoint_state_is_serializable(session_retriever, test_checkpoi
     """
     from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-    graph = build_medical_chatbot_graph(session_retriever, checkpointer=test_checkpointer)
+    graph = build_medical_chatbot_graph(
+        session_retriever,
+        parenting_retriever,
+        parenting_reranker,
+        checkpointer=test_checkpointer
+    )
 
     config = {"configurable": {"thread_id": "test-serialize-check"}}
     state = MedicalChatState(
@@ -118,7 +132,9 @@ async def test_checkpoint_state_is_serializable(session_retriever, test_checkpoi
 
 
 @pytest.mark.asyncio
-async def test_multi_turn_with_checkpoint_reload(session_retriever, test_checkpointer):
+async def test_multi_turn_with_checkpoint_reload(
+    session_retriever, parenting_retriever, parenting_reranker, test_checkpointer
+):
     """Test conversation persists across turns by actually reloading checkpoint.
 
     This verifies that:
@@ -127,7 +143,12 @@ async def test_multi_turn_with_checkpoint_reload(session_retriever, test_checkpo
     3. Agent assignment persists via checkpoint (not passed in state)
     4. Message history accumulates correctly
     """
-    graph = build_medical_chatbot_graph(session_retriever, checkpointer=test_checkpointer)
+    graph = build_medical_chatbot_graph(
+        session_retriever,
+        parenting_retriever,
+        parenting_reranker,
+        checkpointer=test_checkpointer
+    )
     thread_id = "test-multi-turn-reload"
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -168,7 +189,9 @@ async def test_multi_turn_with_checkpoint_reload(session_retriever, test_checkpo
 
 
 @pytest.mark.asyncio
-async def test_simulated_api_flow_with_checkpointing(session_retriever, test_checkpointer):
+async def test_simulated_api_flow_with_checkpointing(
+    session_retriever, parenting_retriever, parenting_reranker, test_checkpointer
+):
     """Simulate the actual API flow that triggered the serialization error.
 
     This test mimics what happens when the real API endpoint is called:
@@ -180,7 +203,12 @@ async def test_simulated_api_flow_with_checkpointing(session_retriever, test_che
 
     This is the test that would have caught the bug reported in the issue.
     """
-    graph = build_medical_chatbot_graph(session_retriever, checkpointer=test_checkpointer)
+    graph = build_medical_chatbot_graph(
+        session_retriever,
+        parenting_retriever,
+        parenting_reranker,
+        checkpointer=test_checkpointer
+    )
 
     # Simulate first API call with medical query
     config1 = {"configurable": {"thread_id": "api-session-123"}}
@@ -216,7 +244,9 @@ async def test_simulated_api_flow_with_checkpointing(session_retriever, test_che
 
 
 @pytest.mark.asyncio
-async def test_rag_agent_with_different_thread_ids(session_retriever, test_checkpointer):
+async def test_rag_agent_with_different_thread_ids(
+    session_retriever, parenting_retriever, parenting_reranker, test_checkpointer
+):
     """Test that different thread_ids maintain separate checkpoint states.
 
     Verifies that:
@@ -224,7 +254,12 @@ async def test_rag_agent_with_different_thread_ids(session_retriever, test_check
     2. No cross-contamination between threads
     3. Serialization works for all threads
     """
-    graph = build_medical_chatbot_graph(session_retriever, checkpointer=test_checkpointer)
+    graph = build_medical_chatbot_graph(
+        session_retriever,
+        parenting_retriever,
+        parenting_reranker,
+        checkpointer=test_checkpointer
+    )
 
     # Thread 1
     config1 = {"configurable": {"thread_id": "thread-001"}}
