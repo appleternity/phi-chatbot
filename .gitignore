@@ -60,3 +60,8 @@ dist/
 *.egg-info/
 
 data
+.claude
+.specify
+output
+src/.cache
+.cache
