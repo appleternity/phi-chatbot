@@ -65,3 +65,18 @@ data
 output
 src/.cache
 .cache
+
+# Logs
+*.log
+indexing_errors.log
+
+# macOS
+.DS_Store
+
+# Backups
+*.backup
+backups/
+
+# Archives
+archive/
+app/core/archive/
