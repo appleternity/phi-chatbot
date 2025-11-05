@@ -1,9 +1,10 @@
-"""RAG agent for medical information retrieval."""
+"""RAG agent for medical information retrieval.
 
-from typing import Literal, Annotated
-from langchain_core.tools import tool
-from langchain.agents import create_agent
-from langgraph.prebuilt import create_react_agent, InjectedState
+Simplified architecture: Direct retrieval → LLM synthesis (no tool calling).
+"""
+
+from typing import Literal
+from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.types import Command
 from langgraph.graph import END
 from app.graph.state import MedicalChatState
@@ -15,18 +16,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Initialize LLM with low temperature for factual accuracy
-llm = create_llm(temperature=1.0)
 
-
-def _format_retrieved_documents(docs: list) -> str:
+def _format_retrieved_documents(docs: list[dict]) -> str:
     """Format retrieved documents for LLM consumption.
 
     This formatting is necessary to provide clear structure and source attribution
     for the LLM to generate accurate responses.
 
     Args:
-        docs: List of retrieved documents
+        docs: List of retrieved document dictionaries
 
     Returns:
         Markdown-formatted string with document information
@@ -36,145 +34,97 @@ def _format_retrieved_documents(docs: list) -> str:
 
     formatted = "# Retrieved Information\n\n"
     for i, doc in enumerate(docs, 1):
-        med_name = doc.metadata.get("name", "Unknown")
-        formatted += f"## Source {i}: {med_name}\n\n"
-        formatted += f"{doc.content}\n\n"
+        # Build a breadcrumb for the source, filtering out empty parts
+        source_parts = [
+            doc.get("source_document"),
+            doc.get("chapter_title"),
+            doc.get("section_title"),
+            doc.get("subsection_title"),
+        ]
+        source_path = " > ".join(filter(None, source_parts))
+        if not source_path:
+            source_path = "Unknown Source"
+
+        formatted += f"## Source {i}: {source_path}\n\n"
+        # formatted += f"### Summary:\n{doc.get('summary', 'Not available.')}\n\n"
+        formatted += f"### Content:\n{doc.get('chunk_text', 'No content.')}\n\n"
+        # formatted += f"Similarity Score: {doc.get('similarity_score', 'N/A'):.4f}\n"
         formatted += "---\n\n"
 
     return formatted
 
 
-@tool
-async def search_medical_docs(
-    query: str, state: Annotated[dict, InjectedState]
-) -> str:
-    """Search the medical knowledge base for information about medications.
+async def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
+    """RAG agent - direct search without tool calling.
 
-    Use this tool to find information about:
-    - Medication names and classifications
-    - Uses and indications
-    - Dosage information
-    - Side effects
-    - Warnings and interactions
+    Flow: Extract query → Search KB → Synthesize answer with context
 
     Args:
-        query: Search query (medication name, condition, or question)
+        state: Current graph state with messages and retriever
 
     Returns:
-        Formatted information from relevant documents
+        Command with synthesized answer message
     """
-    retriever: DocumentRetriever = state["retriever"]
-    docs = await retriever.search(query, top_k=settings.top_k_documents)
-
-    logger.debug(f"Retrieved {len(docs)} documents for query: {query}")
-    return _format_retrieved_documents(docs)
-
-
-def create_rag_agent(retriever: DocumentRetriever):
-    """Create RAG agent with access to document retriever.
-
-    This agent is stateless and doesn't maintain its own checkpointing.
-    The outer graph (builder.py) handles conversation persistence via MemorySaver.
-
-    Two-layer serialization fix:
-    1. Closure pattern (builder.py): Captures rag_agent/retriever in closure scope,
-       preventing them from being added to outer graph's checkpointed state.
-    2. checkpointer=False (this function): Prevents inner agent from attempting
-       to checkpoint the temporary state_with_retriever that contains the
-       non-serializable FAISSRetriever object.
-
-    Both layers are necessary:
-    - Without closure: Outer MemorySaver would try to serialize retriever/rag_agent
-    - Without checkpointer=False: Inner agent would try to serialize retriever
-
-    Conversation persistence:
-    - Handled by outer graph's MemorySaver (messages, session_id, assigned_agent)
-    - Inner agent is stateless - executes current query only
-    - Multi-turn conversations work via outer checkpoint loading
-
-    Args:
-        retriever: Document retriever instance
-
-    Returns:
-        Configured ReAct agent (stateless, checkpointer explicitly disabled)
-    """
-    return create_react_agent(
-        llm,
-        tools=[search_medical_docs],
-        prompt=RAG_AGENT_PROMPT,
-        checkpointer=False,  # Critical: prevents inner agent from checkpointing state_with_retriever
-    )
-
-
-def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
-    """RAG agent that answers medical questions using knowledge base.
-
-    This agent uses retrieval-augmented generation to provide accurate information.
-
-    Args:
-        state: Current graph state
-
-    Returns:
-        Command with agent response
-    """
-    # Get RAG agent and retriever from state (injected by graph builder)
-    rag_agent = state.get("_rag_agent")
     retriever = state.get("retriever")
+    if not retriever:
+        raise ValueError("Retriever not initialized in state")
 
-    if not rag_agent or not retriever:
-        raise ValueError("RAG agent or retriever not initialized in state")
+    session_id = state['session_id']
 
-    logger.debug(f"Session {state['session_id']}: RAG agent searching knowledge base")
+    # 1. Extract query from last user message
+    last_message = state["messages"][-1]
+    query = last_message.content
+    logger.debug(f"Session {session_id}: RAG query: {query}")
 
-    # Inject retriever into state for tool access
-    state_with_retriever = {**state, "retriever": retriever}
+    # 2. Search knowledge base directly (no tool calling!)
+    docs = await retriever.search(query, top_k=settings.top_k_documents)
+    formatted_docs = _format_retrieved_documents(docs)
+    logger.debug(f"Session {session_id}: Retrieved {len(docs)} documents")
 
-    # Invoke agent
-    response = rag_agent.invoke(state_with_retriever)
+    # 3. Build prompt with retrieved context
+    system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
+    context_msg = HumanMessage(content=f"""{formatted_docs}
 
-    # Return command with response
-    return Command(goto=END, update={"messages": response["messages"]})
+# User Question
+{query}
+
+Based on the retrieved information above, provide a comprehensive answer.""")
+
+    # 4. Single LLM call to synthesize answer
+    llm = create_llm(temperature=0.0)  # Factual, deterministic
+    response = await llm.ainvoke([system_msg, context_msg])
+
+    logger.debug(f"Session {session_id}: Generated response")
+    return Command(goto=END, update={"messages": [response]})
 
 
 def create_rag_node(retriever: DocumentRetriever):
     """Factory function to create RAG node with closure-captured dependencies.
 
-    Linus: "Good code has no special cases" - This unified pattern eliminates
-    the serialization problem by capturing non-serializable objects in closure.
-
-    Architecture:
-    - Outer graph uses MemorySaver to checkpoint conversation state (messages, session_id)
-    - rag_agent and retriever are NOT serializable, captured in closure scope
-    - Only serializable data gets persisted to checkpointer
+    Simplified architecture:
+    - No ReAct agent, no tool calling
+    - Direct retrieval → LLM synthesis pipeline
+    - Retriever captured in closure (not serialized)
 
     Args:
         retriever: Document retriever instance (non-serializable)
 
     Returns:
-        Node function ready to be added to LangGraph
+        Async node function ready to be added to LangGraph
     """
-    # Create agent in closure (captured, not checkpointed)
-    rag_agent = create_rag_agent(retriever)
-    logger.debug("RAG agent created and captured in closure")
-
-    def rag_node(state: MedicalChatState) -> Command[Literal[END]]:
+    async def rag_node(state: MedicalChatState) -> Command[Literal[END]]:
         """RAG node with retriever injected via closure.
 
         Args:
             state: Current graph state (serializable only)
 
         Returns:
-            Command with agent response and updated messages
+            Command with synthesized answer message
         """
-        logger.debug(f"Session {state['session_id']}: RAG agent searching knowledge base")
-
         # Inject retriever into temporary state (not checkpointed)
         state_with_retriever = {**state, "retriever": retriever}
 
-        # Invoke agent
-        response = rag_agent.invoke(state_with_retriever)
-
-        # Return only serializable updates
-        return Command(goto=END, update={"messages": response["messages"]})
+        # Call simplified rag_agent_node (await since it's async!)
+        return await rag_agent_node(state_with_retriever)
 
     return rag_node
