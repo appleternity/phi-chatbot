@@ -6,7 +6,7 @@ set -e
 
 # Configuration
 CONTAINER="langgraph-postgres-vector"
-DATABASE="medical_knowledge_test"
+DATABASE="medical_knowledge"
 USER="postgres"
 
 echo "🔄 PostgreSQL Setup and Restore Starting..."
