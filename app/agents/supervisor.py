@@ -6,6 +6,7 @@ from langgraph.types import Command
 from app.graph.state import MedicalChatState
 from app.agents.base import create_llm
 from app.utils.prompts import SUPERVISOR_PROMPT
+from app.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,16 +30,20 @@ llm = create_llm(temperature=0.1)
 
 def supervisor_node(
     state: MedicalChatState,
-) -> Command[Literal["emotional_support", "rag_agent", "parenting"]]:
+) -> Command[str]:
     """Supervisor agent that classifies user intent and assigns appropriate agent.
 
     This node only runs on the first message in a session.
+
+    Note:
+        Return type is Command[str] (not Literal) to support conditional parenting agent.
+        Parenting agent routing is handled at runtime based on ENABLE_PARENTING setting.
 
     Args:
         state: Current graph state with user message
 
     Returns:
-        Command with assigned agent and metadata
+        Command with assigned agent name (one of: emotional_support, rag_agent, parenting)
     """
     # Get the last user message
     last_message = state["messages"][-1]
@@ -54,6 +59,17 @@ def supervisor_node(
         f"(confidence: {classification.confidence:.2f})"
     )
     logger.debug(f"Classification reasoning: {classification.reasoning}")
+
+    # Runtime validation: fallback if parenting selected but disabled
+    if classification.agent == "parenting" and not settings.ENABLE_PARENTING:
+        logger.warning(
+            "Parenting agent selected but disabled. Routing to emotional_support instead."
+        )
+        classification.agent = "emotional_support"
+        classification.reasoning = (
+            f"Parenting agent disabled. Providing emotional support instead. "
+            f"Original reasoning: {classification.reasoning}"
+        )
 
     # Return command with assigned agent
     return Command(
