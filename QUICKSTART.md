@@ -16,10 +16,6 @@ Before starting, ensure you have:
 - **Node.js 18+** and **npm/yarn** (for frontend)
 - **OpenRouter API Key** for LLM calls
 
-**Optional (for better performance):**
-- Apple Silicon Mac (M1/M2/M3) with macOS 12.3+ for MPS support
-- 8GB+ RAM for embedding generation
-
 ---
 
 ## Quick Setup Overview
@@ -43,6 +39,8 @@ pip install -r requirements.txt
 ```
 
 ### 1.2 Configure Environment Variables
+We are not using .env to set the environment variable now.
+I am using conda so I set these variables in the conda env directly.
 
 ```bash
 # Copy example environment file
@@ -68,7 +66,8 @@ POSTGRES_PASSWORD=postgres
 
 ### Option A: Quick Start - Restore from Backup (RECOMMENDED - 5 minutes)
 
-This is the fastest way to get started. The backup includes schema + 1247 pre-indexed chunks.
+This is the fastest way to get started. The backup includes schema + pre-indexed chunks.
+Please download the `medical_knowledge-latest.dump` from the shared drive.
 
 ```bash
 # 1. Start PostgreSQL container
@@ -122,16 +121,7 @@ python -m src.embeddings.cli index \
 
 ```bash
 # Start FastAPI + LangGraph backend
-python -m app.main
-
-# Expected output:
-# ✓ Database connection pool initialized
-# ✓ pgvector extension found
-# ✓ Found 1247 indexed chunks
-# ✓ Embedding encoder loaded (device: mps)
-# ✓ Reranker loaded (device: mps)
-# ✓ Medical chatbot graph built successfully
-# INFO: Uvicorn running on http://0.0.0.0:8000
+uvicorn app.main:app --reload --port 8000
 ```
 
 **Backend is now running on http://localhost:8000**
