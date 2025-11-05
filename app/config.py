@@ -1,4 +1,6 @@
 """Application configuration using pydantic-settings."""
+# TODO: We probably should not read .env directly.
+# In production, environment variables should be set externally.
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -36,6 +38,45 @@ class Settings(BaseSettings):
 
     # Retrieval Settings
     top_k_documents: int = 3
+
+    # PostgreSQL + pgvector Settings (002-semantic-search)
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "medical_knowledge"
+    postgres_user: str = "postgres"
+    postgres_password: str = "postgres"
+
+    @property
+    def database_url(self) -> str:
+        """Construct PostgreSQL connection URL from components."""
+        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    # embedding model
+    embedding_model_name: str = "Qwen/Qwen3-Embedding-0.6B"
+
+    # Parenting Agent Hybrid Retrieval Settings
+    dense_weight: float = 0.7
+    sparse_weight: float = 0.3
+    reranker_model: str = "Qwen/Qwen3-Reranker-0.6B"
+    reranker_top_k: int = 3
+
+    # Retrieval Strategy Configuration
+    # Options: "simple" (no reranking), "rerank" (two-stage), "advanced" (query expansion + rerank)
+    RETRIEVAL_STRATEGY: str = "simple"
+
+    # Model Loading Configuration
+    # True = load models at startup, False = lazy load on first use
+    PRELOAD_MODELS: bool = False
+
+    # Feature Flags
+    # Temporarily disable parenting system to focus on medication Q&A POC
+    ENABLE_PARENTING: bool = False
+    # Enable database retry logic (False for POC to fail fast)
+    ENABLE_RETRIES: bool = False
+
+    # Model Names (standardized uppercase constants)
+    EMBEDDING_MODEL: str = "Qwen/Qwen3-Embedding-0.6B"
+    RERANKER_MODEL: str = "Qwen/Qwen3-Reranker-0.6B"
 
 
 # Global settings instance
