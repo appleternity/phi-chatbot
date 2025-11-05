@@ -1,0 +1,8 @@
+{
+  "model_name": "Qwen/Qwen3-Embedding-0.6B",
+  "device": "mps",
+  "batch_size": 16,
+  "max_length": 1024,
+  "normalize_embeddings": true,
+  "instruction": null
+}
