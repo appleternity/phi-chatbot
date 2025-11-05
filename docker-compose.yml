@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  postgres-vector:
+    image: pgvector/pgvector:pg15
+    container_name: langgraph-postgres-vector
+    restart: unless-stopped
+
+    ports:
+      - "5432:5432"
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-medical_knowledge}
+
+    volumes:
+      # Persistent data storage
+      - postgres_data:/var/lib/postgresql/data
+
+      # Initialization scripts (optional)
+      - ./scripts/init-scripts:/docker-entrypoint-initdb.d
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - langgraph-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  langgraph-network:
+    driver: bridge
