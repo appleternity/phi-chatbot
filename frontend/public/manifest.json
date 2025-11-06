@@ -1,0 +1,16 @@
+{
+  "name": "Medical Chatbot",
+  "short_name": "MedChat",
+  "description": "Medical chatbot with mental health support",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
