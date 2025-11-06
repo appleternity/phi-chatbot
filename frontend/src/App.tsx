@@ -1,27 +1,36 @@
 import { useState, useEffect } from 'react'
 import ChatContainer from './components/ChatContainer'
 import Header from './components/Header'
-import { generateSessionId, getSessionId, setSessionId } from './utils/session'
+import {
+  generateUserId,
+  getUserId,
+  setUserId,
+  getSessionId,
+  clearSession,
+} from './utils/session'
 
 function App() {
-  const [sessionId, setCurrentSessionId] = useState<string>('')
+  const [userId, setCurrentUserId] = useState<string>('')
+  const [sessionId, setCurrentSessionId] = useState<string | null>(null)
 
   useEffect(() => {
-    // Get or create session ID on mount
-    let sid = getSessionId()
-    if (!sid) {
-      sid = generateSessionId()
-      setSessionId(sid)
+    // Get or create user ID on mount
+    let uid = getUserId()
+    if (!uid) {
+      uid = generateUserId()
+      setUserId(uid)
     }
+    setCurrentUserId(uid)
+
+    // Load session ID (may be null for new session)
+    const sid = getSessionId()
     setCurrentSessionId(sid)
   }, [])
 
   const handleNewSession = () => {
-    const newSessionId = generateSessionId()
-    setSessionId(newSessionId)
-    setCurrentSessionId(newSessionId)
-    // Clear localStorage history
-    localStorage.removeItem('chat_history')
+    // Clear session-specific data (keep user_id)
+    clearSession()
+    setCurrentSessionId(null)
     // Reload to reset state
     window.location.reload()
   }
@@ -29,8 +38,8 @@ function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-500 to-secondary-500">
       <div className="container mx-auto px-4 py-6 h-screen flex flex-col">
-        <Header sessionId={sessionId} onNewSession={handleNewSession} />
-        <ChatContainer sessionId={sessionId} />
+        <Header sessionId={sessionId || 'New Session'} onNewSession={handleNewSession} />
+        <ChatContainer userId={userId} sessionId={sessionId} />
       </div>
     </div>
   )
