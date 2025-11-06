@@ -6,7 +6,10 @@ Two-stage retrieval for improved relevance.
 import logging
 from typing import List, Dict, Any, Optional
 
+from langchain_core.messages import BaseMessage
+
 from app.db.connection import DatabasePool
+from app.retrieval.utils import extract_retrieval_query
 from src.embeddings.encoder import Qwen3EmbeddingEncoder
 from app.core.qwen3_reranker import Qwen3Reranker
 
@@ -49,31 +52,36 @@ class RerankRetriever:
 
     async def search(
         self,
-        query: str,
+        query: List[BaseMessage],
         top_k: int = 5,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Search with reranking for improved relevance.
 
         Args:
-            query: Search query string
+            query: List of conversation messages.
+                   For RerankRetriever, only the last human message is used (max_history=1).
+                   The reranker provides semantic richness, so no extra history needed.
             top_k: Number of final results to return
             filters: Optional metadata filters
 
         Returns:
             List of result dictionaries sorted by rerank_score (highest first)
         """
+        # Extract query string from last human message
+        query_str = extract_retrieval_query(query, max_history=1)
+
         # Validate
-        assert query and query.strip(), "Query cannot be empty"
+        assert query_str and query_str.strip(), "Query cannot be empty"
         assert top_k > 0, f"top_k must be positive, got {top_k}"
 
-        logger.info(f"Rerank search: query='{query[:50]}...', top_k={top_k}")
+        logger.info(f"Rerank search: query='{query_str[:50]}...', top_k={top_k}")
 
         # Stage 1: Retrieve candidates (4x oversampling)
         candidate_count = top_k * 4
 
         # Generate embedding
-        query_embedding = self.encoder.encode(query).tolist()
+        query_embedding = self.encoder.encode(query_str).tolist()
 
         # Build SQL query for candidates
         sql, params = self._build_query(query_embedding, candidate_count, filters)
@@ -89,7 +97,7 @@ class RerankRetriever:
 
         # Stage 2: Rerank candidates
         candidate_texts = [row["chunk_text"] for row in candidates]
-        rerank_scores = self.reranker.rerank(query, candidate_texts)
+        rerank_scores = self.reranker.rerank(query_str, candidate_texts)
 
         # Combine scores with candidates
         results_with_scores = []

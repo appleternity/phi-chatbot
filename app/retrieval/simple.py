@@ -6,7 +6,10 @@ No reranking, fastest retrieval approach.
 import logging
 from typing import List, Dict, Any, Optional
 
+from langchain_core.messages import BaseMessage
+
 from app.db.connection import DatabasePool
+from app.retrieval.utils import extract_retrieval_query
 from src.embeddings.encoder import Qwen3EmbeddingEncoder
 
 logger = logging.getLogger(__name__)
@@ -43,28 +46,32 @@ class SimpleRetriever:
 
     async def search(
         self,
-        query: str,
+        query: List[BaseMessage],
         top_k: int = 5,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Search for relevant documents.
 
         Args:
-            query: Search query string
+            query: List of conversation messages.
+                   For SimpleRetriever, only the last human message is used (max_history=1).
             top_k: Number of results to return
             filters: Optional metadata filters (e.g., {"source_document": "..."})
 
         Returns:
             List of result dictionaries with document data and similarity scores
         """
+        # Extract query string from last human message
+        query_str = extract_retrieval_query(query, max_history=1)
+
         # Validate
-        assert query and query.strip(), "Query cannot be empty"
+        assert query_str and query_str.strip(), "Query cannot be empty"
         assert top_k > 0, f"top_k must be positive, got {top_k}"
 
-        logger.info(f"Simple search: query='{query[:50]}...', top_k={top_k}")
+        logger.info(f"Simple search: query='{query_str[:50]}...', top_k={top_k}")
 
         # Generate embedding
-        query_embedding = self.encoder.encode(query).tolist()
+        query_embedding = self.encoder.encode(query_str).tolist()
 
         # Build SQL query
         sql, params = self._build_query(query_embedding, top_k, filters)

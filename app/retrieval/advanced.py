@@ -6,7 +6,10 @@ Most sophisticated retrieval approach using LLM query expansion.
 import logging
 from typing import List, Dict, Any, Optional
 
+from langchain_core.messages import BaseMessage
+
 from app.db.connection import DatabasePool
+from app.retrieval.utils import extract_retrieval_query, format_conversation_context
 from src.embeddings.encoder import Qwen3EmbeddingEncoder
 from app.core.qwen3_reranker import Qwen3Reranker
 from app.agents.base import create_llm
@@ -47,50 +50,94 @@ class AdvancedRetriever:
         self.pool = pool
         self.encoder = encoder
         self.reranker = reranker
-        self.llm = create_llm(temperature=0.7)  # For creative query variations
+        self.llm = create_llm(temperature=1.0)  # For creative query variations
 
         logger.info("AdvancedRetriever initialized (query expansion + reranking)")
 
-    async def expand_query(self, query: str) -> List[str]:
-        """Expand query into multiple variations using LLM.
+    async def expand_query(
+        self,
+        query: str,
+        conversation_context: Optional[str] = None
+    ) -> List[str]:
+        """Expand query into 4 diverse variations using LLM.
 
-        Generates 3 query variations:
-        1. Original query (unchanged)
-        2. More specific technical variation
-        3. Broader contextual variation
+        Generates 4 query variations optimized for semantic search:
+        1. SPECIFIC: Technical/medical terminology variation
+        2. BROADER: Contextual variation covering related topics
+        3. KEYWORDS: Keyword-based variation for matching
+        4. CONTEXTUAL: Variation considering conversation history
+
+        IMPORTANT: All variations are generated in English, even if the input
+        query is in Chinese, to match the English medical knowledge base.
 
         Args:
-            query: Original user query
+            query: User query (may be in Chinese or English)
+            conversation_context: Optional conversation history for better context
 
         Returns:
-            List of 3 query strings
+            List of 4 query variation strings (all in English)
         """
-        expansion_prompt = f"""You are a medical information search assistant.
+        # Build expansion prompt with optional conversation context
+        context_section = ""
+        context_instruction = ""
+        if conversation_context:
+            context_section = f"""
+Conversation History (for context only):
+{conversation_context}
 
-Given the user's query, generate 2 additional search variations to improve retrieval:
+"""
+            context_instruction = """
+- For CONTEXTUAL variation: Consider the conversation history, but FOCUS PRIMARILY on the latest user question
+- The conversation provides background context, but the latest query is the main search intent
+"""
 
-1. A more SPECIFIC, TECHNICAL variation (using medical terminology)
-2. A BROADER, CONTEXTUAL variation (considering related topics)
+        expansion_prompt = f"""You are a medical search query optimization assistant.
 
-Original query: {query}
+{context_section}Task: Generate 4 diverse English search query variations for the following user question.
 
-Respond in this format:
-SPECIFIC: <your specific variation>
-BROADER: <your broader variation>
+User Query: {query}
 
-Example:
-User query: "What are side effects of aripiprazole?"
-SPECIFIC: aripiprazole adverse reactions pharmacological effects dopamine antagonist
-BROADER: atypical antipsychotic medication side effects safety profile tolerability
+Requirements:
+1. All variations MUST be in ENGLISH only (even if the user query is in Chinese)
+2. Keep each variation CONCISE (under 15 words maximum)
+3. Each variation should target different aspects to maximize retrieval coverage{context_instruction}
 
-Now generate variations for the query above:"""
+Generate these 4 variations:
 
-        # Generate variations
+1. SPECIFIC: Use precise medical/technical terminology
+   - Include specific medical terms, drug names, conditions
+   - Target healthcare professionals' language
+   - Focus on clinical/pharmacological aspects
+
+2. BROADER: Cover related topics and context
+   - Include related conditions, categories, or concepts
+   - Consider patient-friendly terminology
+   - Think about "what else would someone searching this want to know?"
+
+3. KEYWORDS: Essential keywords only (no full sentences)
+   - Extract core keywords
+   - Medical terms + condition terms
+   - Optimized for semantic matching
+
+4. CONTEXTUAL: Combine user intent with any conversation context
+   - What is the user really trying to find out?
+   - Consider implied questions from context
+   - Maintain focus on the latest query
+
+Format your response EXACTLY as:
+SPECIFIC: <variation>
+BROADER: <variation>
+KEYWORDS: <variation>
+CONTEXTUAL: <variation>
+
+Now generate variations:"""
+
+        # Generate variations with LLM
         response = self.llm.invoke([{"role": "user", "content": expansion_prompt}])
         response_text = response.content
 
         # Parse response
-        queries = [query]  # Always include original
+        queries = []
 
         for line in response_text.split('\n'):
             line = line.strip()
@@ -102,51 +149,85 @@ Now generate variations for the query above:"""
                 broader = line.replace('BROADER:', '').strip()
                 if broader:
                     queries.append(broader)
+            elif line.startswith('KEYWORDS:'):
+                keywords = line.replace('KEYWORDS:', '').strip()
+                if keywords:
+                    queries.append(keywords)
+            elif line.startswith('CONTEXTUAL:'):
+                contextual = line.replace('CONTEXTUAL:', '').strip()
+                if contextual:
+                    queries.append(contextual)
 
-        # Ensure we have exactly 3 queries
-        if len(queries) < 3:
-            # Fallback: duplicate original if parsing failed
-            while len(queries) < 3:
+        # Warning if parsing failed to get all 4 variations
+        if len(queries) < 4:
+            logger.warning(
+                f"Query expansion parsing incomplete: expected 4 variations, got {len(queries)}. "
+                f"LLM response may not have followed format. Using fallback strategy."
+            )
+            # Fallback: use original query to fill gaps
+            while len(queries) < 4:
                 queries.append(query)
 
-        queries = queries[:3]  # Take first 3
-
-        logger.info(f"Expanded query into {len(queries)} variations")
+        logger.info(f"Expanded query into {len(queries)} variations (all English)")
         for i, q in enumerate(queries, 1):
-            logger.debug(f"  {i}. {q[:80]}...")
+            logger.debug(f"  {i}: {q}...")
 
         return queries
 
     async def search(
         self,
-        query: str,
+        query: List[BaseMessage],
         top_k: int = 5,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Search with query expansion and reranking.
 
         Args:
-            query: Search query string
+            query: List of conversation messages.
+                   For AdvancedRetriever, uses last 5 messages to provide rich context
+                   for LLM-based query expansion. This enables better understanding of
+                   follow-up questions and conversational context.
             top_k: Number of final results to return
             filters: Optional metadata filters
 
         Returns:
             List of result dictionaries sorted by rerank_score
         """
+        # Extract query string from last human message
+        # TODO: do we need extract_retrieval_query or format_conversation_context functions?
+        # TODO: do we need to keep query_str and conversation_context separate?
+        query_str = extract_retrieval_query(query, max_history=1)
+
+        # Format last 5 messages for query expansion context (richer understanding)
+        # Exclude the last message to avoid duplication with query_str
+        if len(query) > 1:
+            conversation_context = format_conversation_context(
+                query,
+                max_messages=5,
+                exclude_last_n=1  # EXPLICIT: Don't duplicate the query message!
+            )
+        else:
+            conversation_context = None
+
         # Validate
-        assert query and query.strip(), "Query cannot be empty"
+        assert query_str and query_str.strip(), "Query cannot be empty"
         assert top_k > 0, f"top_k must be positive, got {top_k}"
 
-        logger.info(f"Advanced search: query='{query[:50]}...', top_k={top_k}")
+        logger.info(f"Advanced search: query='{query_str[:50]}...', top_k={top_k}")
+        if conversation_context:
+            logger.debug(f"Using conversation context with {len(conversation_context)} chars")
 
-        # Stage 1: Expand query
-        queries = await self.expand_query(query)
+        # Stage 1: Expand query with conversation context
+        queries = await self.expand_query(query_str, conversation_context)
 
         # Stage 2: Search all query variations
         all_candidates = []
         seen_chunk_ids = set()
 
+        # TODO: Can we do it in batch
+        # Let's keep it simple for now. but please keep this todo.
         for i, q in enumerate(queries, 1):
+            logger.info(f"Searching with query variation {i}: {q}...")
             # Generate embedding
             query_embedding = self.encoder.encode(q).tolist()
 
@@ -176,7 +257,7 @@ Now generate variations for the query above:"""
 
         # Stage 3: Rerank all candidates with ORIGINAL query
         candidate_texts = [row["chunk_text"] for row in all_candidates]
-        rerank_scores = self.reranker.rerank(query, candidate_texts)
+        rerank_scores = self.reranker.rerank(query_str, candidate_texts)
 
         # Combine scores with candidates
         results_with_scores = []
@@ -233,6 +314,7 @@ Now generate variations for the query above:"""
         params = [embedding]
         param_index = 2
 
+        # NOTE: what is filters here?
         if filters:
             where_clauses = []
             for key, value in filters.items():
