@@ -354,6 +354,41 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 ## Recent Changes
 - 002-semantic-search: Added Python 3.11+ + ransformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI
 
+### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
+
+**Enhanced retriever interface to accept conversation history for context-aware retrieval**:
+
+- **Key Change**: Retrievers now accept either `str` or `List[BaseMessage]` as query input
+  - Backward compatible: existing string queries still work
+  - Context-aware: pass full conversation history for better retrieval
+  - Strategy-specific: each retriever decides how much history to use
+
+- **Retriever Strategy History Usage**:
+  - **SimpleRetriever**: Last message only (`max_history=1`) - fast, simple
+  - **RerankRetriever**: Last message only (`max_history=1`) - reranker provides semantic richness
+  - **AdvancedRetriever**: Last 5 messages (`max_history=5`) - rich context for LLM query expansion
+
+- **Implementation Details**:
+  - `app/retrieval/utils.py`: New utility module with `extract_query_from_messages()` and `format_message_context()`
+  - `app/retrieval/base.py`: Updated `RetrieverProtocol` signature to `Union[str, List[BaseMessage]]`
+  - `app/retrieval/simple.py`, `rerank.py`, `advanced.py`: Updated to use message extraction utilities
+  - `app/agents/rag_agent.py`: Now passes `state["messages"]` to retriever instead of just query string
+
+- **Benefits**:
+  - **Context Resolution**: Handles follow-up questions like "What about children?" with implicit context
+  - **Separation of Concerns**: Retrievers encapsulate their own history needs (no longer RAG agent's responsibility)
+  - **Enhanced Query Expansion**: AdvancedRetriever uses conversation context for better LLM query variations
+  - **Zero Performance Impact**: Simple/Rerank strategies unchanged, Advanced adds ~100-200ms for richer context
+
+- **Testing**:
+  - `tests/unit/test_retrieval_utils.py`: Comprehensive tests for utility functions
+  - Verified backward compatibility with string inputs
+  - Tested multi-turn conversations with context extraction
+
+- **Files Modified**:
+  - Created: `app/retrieval/utils.py`, `tests/unit/test_retrieval_utils.py`
+  - Updated: `app/retrieval/base.py`, `simple.py`, `rerank.py`, `advanced.py`, `app/agents/rag_agent.py`
+
 ### Cache Removal - Output-Based Skip Logic (2025-11-01)
 
 **Removed content-hash caching system and implemented simpler output-file-based skip logic**:

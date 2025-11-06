@@ -66,7 +66,7 @@ nano .env
 ```bash
 OPENAI_API_BASE=https://openrouter.ai/api/v1
 OPENAI_API_KEY=your-openrouter-api-key-here
-MODEL_NAME=qwen/qwen-2.5-72b-instruct
+MODEL_NAME=qwen/qwen3-max
 
 # 選用
 LOG_LEVEL=INFO
@@ -242,7 +242,7 @@ langgraph/
 |----------|---------|-------------|
 | `OPENAI_API_BASE` | https://openrouter.ai/api/v1 | LLM API 端點 |
 | `OPENAI_API_KEY` | *必填* | API 金鑰 |
-| `MODEL_NAME` | qwen/qwen-2.5-72b-instruct | 模型識別碼 |
+| `MODEL_NAME` | qwen/qwen3-max | 模型識別碼 |
 | `LOG_LEVEL` | INFO | 日誌等級 |
 | `SESSION_TTL_SECONDS` | 3600 | 會話過期時間 |
 | `EMBEDDING_MODEL` | all-MiniLM-L6-v2 | Sentence transformer 模型 |
