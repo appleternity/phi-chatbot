@@ -1,3 +1,4 @@
+# TODO: Are we actually using this file?
 """PostgreSQL retriever with pgvector similarity search and Qwen3 reranking.
 
 This module provides PostgreSQLRetriever, a DocumentRetriever implementation that:
@@ -141,8 +142,8 @@ class PostgreSQLRetriever(DocumentRetriever):
         self.encoder = Qwen3EmbeddingEncoder(
             model_name=self.embedding_model,
             device="mps",
-            batch_size=16,
-            max_length=1024,
+            batch_size=1,
+            max_length=8192,
             normalize_embeddings=True,
             instruction=None
         )
@@ -154,7 +155,7 @@ class PostgreSQLRetriever(DocumentRetriever):
             self.reranker = Qwen3Reranker(
                 model_name=self.reranker_model,
                 device="mps",
-                batch_size=8
+                batch_size=1,
             )
             logger.info("✅ Reranker loaded")
         else:
@@ -210,8 +211,8 @@ class PostgreSQLRetriever(DocumentRetriever):
             self.encoder = Qwen3EmbeddingEncoder(
                 model_name=self.embedding_model,
                 device="mps",
-                batch_size=16,
-                max_length=1024,
+                batch_size=1,
+                max_length=8192,
                 normalize_embeddings=True,
                 instruction=None
             )
@@ -250,7 +251,7 @@ class PostgreSQLRetriever(DocumentRetriever):
                 self.reranker = Qwen3Reranker(
                     model_name=self.reranker_model,
                     device="mps",
-                    batch_size=8
+                    batch_size=1,
                 )
 
             # Extract candidate texts for reranking
