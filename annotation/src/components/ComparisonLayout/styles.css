@@ -1,0 +1,51 @@
+/* Responsive layout for multiple chatbot instances */
+
+.comparison-container {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 1rem;
+  min-height: calc(100vh - 8rem);
+}
+
+/* Horizontal scroll styling */
+.comparison-container::-webkit-scrollbar {
+  height: 8px;
+}
+
+.comparison-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.comparison-container::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+.comparison-container::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1400px) {
+  .comparison-container {
+    justify-content: flex-start;
+  }
+}
+
+/* Selection ring animation */
+@keyframes ring-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.ring-4 {
+  animation: ring-pulse 2s ease-in-out infinite;
+}
