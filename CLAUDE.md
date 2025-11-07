@@ -3,10 +3,20 @@
 Auto-generated from all feature plans. Last updated: 2025-10-29
 
 ## Active Technologies
-- Python 3.11+ + transformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI (002-semantic-search)
-- PostgreSQL 15+ with pgvector extension (002-semantic-search)
 
-- Python 3.11+ (001-llm-contextual-chunking)
+### Annotation Interface (001-chatbot-annotation)
+- React 18.2.0 + TypeScript 5.0.0
+- Vite 5.0.0 (build tool)
+- Tailwind CSS 3.4.0 (styling with Instagram gradients)
+- LocalStorage API (5-10MB limit for conversation history and session data)
+- Lodash (debouncing utilities)
+
+### Semantic Search (002-semantic-search)
+- Python 3.11+ + transformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI
+- PostgreSQL 15+ with pgvector extension
+
+### Chunking (001-llm-contextual-chunking)
+- Python 3.11+
 - OpenRouter API for LLM calls
 - Pydantic 2.x for data validation
 - Tiktoken for token counting
@@ -49,6 +59,26 @@ tests/
 ```
 
 ## Commands
+
+### Annotation Interface
+
+```bash
+# Development
+cd annotation
+npm install
+npm run dev
+
+# Production build
+npm run build
+npm run preview
+
+# Code quality
+npm run lint
+npm run type-check
+
+# Testing
+# See annotation/SMOKE_TEST_CHECKLIST.md for manual testing
+```
 
 ### Chunking Commands
 
@@ -352,18 +382,18 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 - Comprehensive docstrings for all public methods
 
 ## Recent Changes
+- 001-chatbot-annotation: Added JavaScript/TypeScript (ES2020+), React 18+ + React 18, React Router (optional), CSS-in-JS or Tailwind CSS for styling
+- 001-chatbot-annotation: Added JavaScript/TypeScript (ES2020+), React 18+ + React 18, React Router (optional), CSS-in-JS or Tailwind CSS for styling
 - 002-semantic-search: Added Python 3.11+ + ransformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI
 
 ### Cache Removal - Output-Based Skip Logic (2025-11-01)
 
 **Removed content-hash caching system and implemented simpler output-file-based skip logic**:
 
-- **Key Change**: Replaced cache_store module with output file checking
   - Check if structure.json exists → skip Phase 1 if valid
   - Check each chunk file → skip that chunk if valid (granular skip logic)
   - `--redo` flag forces reprocessing regardless of existing files
 
-- **Benefits**:
   - **Simplicity**: ~200 lines of cache code removed
   - **Transparency**: Output files are the source of truth (no hidden cache layer)
   - **Disk Space**: No duplicate storage (cache + output)
