@@ -1,0 +1,222 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Comparison Session LocalStorage Schema",
+  "description": "Schema for ComparisonSession data stored in browser localStorage",
+  "type": "object",
+  "required": ["sessionId", "chatbots", "selection", "metadata"],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Unique session identifier (UUID v4 format)",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "examples": ["550e8400-e29b-41d4-a716-446655440000"]
+    },
+    "chatbots": {
+      "type": "array",
+      "description": "Array of chatbot instances with their configurations and messages",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["chatId", "displayName", "messages", "state"],
+        "properties": {
+          "chatId": {
+            "type": "string",
+            "description": "Unique identifier for this chatbot instance",
+            "examples": ["bot1", "bot2", "bot3"]
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Human-readable name displayed in UI",
+            "minLength": 1,
+            "examples": ["GPT-4", "Claude", "Gemini"]
+          },
+          "avatar": {
+            "type": "string",
+            "description": "Optional avatar/icon URL",
+            "format": "uri",
+            "examples": ["https://example.com/avatar.png"]
+          },
+          "messages": {
+            "type": "array",
+            "description": "Complete conversation history with this chatbot",
+            "items": {
+              "type": "object",
+              "required": ["id", "content", "sender", "timestamp"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique message identifier (timestamp-based)",
+                  "examples": ["1730906096789"]
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Message text content",
+                  "minLength": 1,
+                  "examples": ["What is the capital of France?"]
+                },
+                "sender": {
+                  "type": "string",
+                  "description": "Who sent the message",
+                  "enum": ["user", "bot"]
+                },
+                "timestamp": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp when message was sent",
+                  "format": "date-time",
+                  "examples": ["2025-11-06T12:34:56.789Z"]
+                },
+                "displayStyle": {
+                  "type": "object",
+                  "description": "Optional display styling metadata",
+                  "properties": {
+                    "backgroundColor": { "type": "string" },
+                    "textColor": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "state": {
+            "type": "string",
+            "description": "Current response state of the chatbot",
+            "enum": ["idle", "typing", "responded", "error"]
+          },
+          "config": {
+            "type": "object",
+            "description": "Configuration settings that differentiate this chatbot",
+            "properties": {
+              "model": {
+                "type": "string",
+                "description": "Model name or identifier",
+                "examples": ["gpt-4-turbo", "claude-3-opus", "gemini-pro"]
+              },
+              "parameters": {
+                "type": "object",
+                "description": "Model parameters (temperature, top_p, etc.)",
+                "additionalProperties": true
+              },
+              "apiEndpoint": {
+                "type": "string",
+                "description": "API endpoint URL if applicable",
+                "format": "uri"
+              }
+            }
+          },
+          "errorMessage": {
+            "type": "string",
+            "description": "Error message if state === 'error'",
+            "examples": ["Failed to fetch response from API"]
+          }
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "description": "User's overall preference selection",
+      "required": ["selectedChatbotId", "timestamp"],
+      "properties": {
+        "selectedChatbotId": {
+          "type": ["string", "null"],
+          "description": "ID of the selected chatbot, or null if not selected",
+          "examples": ["bot1", "bot2", "bot3", null]
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when selection was made",
+          "format": "date-time",
+          "examples": ["2025-11-06T12:45:30.456Z"]
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional notes or reasoning (future enhancement)"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Session metadata for versioning and timestamps",
+      "required": ["createdAt", "updatedAt", "version"],
+      "properties": {
+        "createdAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when session was created",
+          "format": "date-time",
+          "examples": ["2025-11-06T12:30:00.000Z"]
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when session was last updated",
+          "format": "date-time",
+          "examples": ["2025-11-06T12:45:30.456Z"]
+        },
+        "version": {
+          "type": "string",
+          "description": "Schema version for migrations (semver format)",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "examples": ["1.0.0"]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+      "chatbots": [
+        {
+          "chatId": "bot1",
+          "displayName": "GPT-4",
+          "avatar": "https://example.com/gpt4.png",
+          "messages": [
+            {
+              "id": "1730906096789",
+              "content": "What is the capital of France?",
+              "sender": "user",
+              "timestamp": "2025-11-06T12:34:56.789Z"
+            },
+            {
+              "id": "1730906098123",
+              "content": "The capital of France is Paris.",
+              "sender": "bot",
+              "timestamp": "2025-11-06T12:34:58.123Z"
+            }
+          ],
+          "state": "idle",
+          "config": {
+            "model": "gpt-4-turbo",
+            "parameters": {
+              "temperature": 0.7
+            }
+          }
+        },
+        {
+          "chatId": "bot2",
+          "displayName": "Claude",
+          "messages": [],
+          "state": "idle",
+          "config": {
+            "model": "claude-3-opus"
+          }
+        },
+        {
+          "chatId": "bot3",
+          "displayName": "Gemini",
+          "messages": [],
+          "state": "idle",
+          "config": {
+            "model": "gemini-pro"
+          }
+        }
+      ],
+      "selection": {
+        "selectedChatbotId": null,
+        "timestamp": "2025-11-06T12:30:00.000Z"
+      },
+      "metadata": {
+        "createdAt": "2025-11-06T12:30:00.000Z",
+        "updatedAt": "2025-11-06T12:34:58.123Z",
+        "version": "1.0.0"
+      }
+    }
+  ]
+}

@@ -1,0 +1,228 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Chatbot Annotation Export Data",
+  "description": "Schema for JSON files exported via the '下載資料' (Download Data) button",
+  "type": "object",
+  "required": ["sessionId", "exportTimestamp", "selectedChatbotId", "chatbots", "metadata"],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Unique session identifier (UUID v4 format)",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "examples": ["550e8400-e29b-41d4-a716-446655440000"]
+    },
+    "exportTimestamp": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when data was exported",
+      "format": "date-time",
+      "examples": ["2025-11-06T13:00:00.000Z"]
+    },
+    "selectedChatbotId": {
+      "type": ["string", "null"],
+      "description": "ID of the chatbot selected as preferred, or null if no selection made",
+      "examples": ["bot1", "bot2", "bot3", null]
+    },
+    "chatbots": {
+      "type": "array",
+      "description": "Array of chatbot instances with their complete conversation histories",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["chatId", "displayName", "messages"],
+        "properties": {
+          "chatId": {
+            "type": "string",
+            "description": "Unique identifier for this chatbot instance",
+            "examples": ["bot1", "bot2", "bot3"]
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Human-readable name displayed in UI",
+            "minLength": 1,
+            "examples": ["GPT-4", "Claude", "Gemini"]
+          },
+          "messages": {
+            "type": "array",
+            "description": "Complete conversation history",
+            "items": {
+              "type": "object",
+              "required": ["id", "content", "sender", "timestamp"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique message identifier",
+                  "examples": ["1730906096789"]
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Message text content",
+                  "minLength": 1,
+                  "examples": ["What is the capital of France?"]
+                },
+                "sender": {
+                  "type": "string",
+                  "description": "Who sent the message",
+                  "enum": ["user", "bot"]
+                },
+                "timestamp": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp when message was sent",
+                  "format": "date-time",
+                  "examples": ["2025-11-06T12:34:56.789Z"]
+                },
+                "displayStyle": {
+                  "type": "object",
+                  "description": "Optional display styling metadata",
+                  "properties": {
+                    "backgroundColor": {
+                      "type": "string",
+                      "description": "CSS color value for message background"
+                    },
+                    "textColor": {
+                      "type": "string",
+                      "description": "CSS color value for message text"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "config": {
+            "type": "object",
+            "description": "Configuration settings that differentiate this chatbot instance",
+            "properties": {
+              "model": {
+                "type": "string",
+                "description": "Model name or identifier",
+                "examples": ["gpt-4-turbo", "claude-3-opus", "gemini-pro"]
+              },
+              "parameters": {
+                "type": "object",
+                "description": "Model parameters (temperature, top_p, etc.)",
+                "additionalProperties": true
+              },
+              "apiEndpoint": {
+                "type": "string",
+                "description": "API endpoint URL if applicable",
+                "format": "uri"
+              }
+            }
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Export metadata and session information",
+      "required": ["exportVersion", "sessionCreatedAt", "sessionUpdatedAt", "totalMessages"],
+      "properties": {
+        "exportVersion": {
+          "type": "string",
+          "description": "Schema version for compatibility (semver format)",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "examples": ["1.0.0"]
+        },
+        "sessionCreatedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when session was created",
+          "format": "date-time",
+          "examples": ["2025-11-06T12:30:00.000Z"]
+        },
+        "sessionUpdatedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when session was last updated",
+          "format": "date-time",
+          "examples": ["2025-11-06T12:45:30.456Z"]
+        },
+        "totalMessages": {
+          "type": "integer",
+          "description": "Total count of messages across all chatbots",
+          "minimum": 0,
+          "examples": [12, 45, 100]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+      "exportTimestamp": "2025-11-06T13:00:00.000Z",
+      "selectedChatbotId": "bot2",
+      "chatbots": [
+        {
+          "chatId": "bot1",
+          "displayName": "GPT-4",
+          "messages": [
+            {
+              "id": "1730906096789",
+              "content": "What is the capital of France?",
+              "sender": "user",
+              "timestamp": "2025-11-06T12:34:56.789Z"
+            },
+            {
+              "id": "1730906098123",
+              "content": "The capital of France is Paris.",
+              "sender": "bot",
+              "timestamp": "2025-11-06T12:34:58.123Z"
+            }
+          ],
+          "config": {
+            "model": "gpt-4-turbo",
+            "parameters": {
+              "temperature": 0.7
+            }
+          }
+        },
+        {
+          "chatId": "bot2",
+          "displayName": "Claude",
+          "messages": [
+            {
+              "id": "1730906100000",
+              "content": "What is the capital of France?",
+              "sender": "user",
+              "timestamp": "2025-11-06T12:35:00.000Z"
+            },
+            {
+              "id": "1730906102500",
+              "content": "Paris is the capital city of France.",
+              "sender": "bot",
+              "timestamp": "2025-11-06T12:35:02.500Z"
+            }
+          ],
+          "config": {
+            "model": "claude-3-opus"
+          }
+        },
+        {
+          "chatId": "bot3",
+          "displayName": "Gemini",
+          "messages": [
+            {
+              "id": "1730906110000",
+              "content": "What is the capital of France?",
+              "sender": "user",
+              "timestamp": "2025-11-06T12:35:10.000Z"
+            },
+            {
+              "id": "1730906112000",
+              "content": "The capital of France is Paris, which is also the country's largest city.",
+              "sender": "bot",
+              "timestamp": "2025-11-06T12:35:12.000Z"
+            }
+          ],
+          "config": {
+            "model": "gemini-pro"
+          }
+        }
+      ],
+      "metadata": {
+        "exportVersion": "1.0.0",
+        "sessionCreatedAt": "2025-11-06T12:30:00.000Z",
+        "sessionUpdatedAt": "2025-11-06T12:45:30.456Z",
+        "totalMessages": 6
+      }
+    }
+  ]
+}
