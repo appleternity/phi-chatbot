@@ -13,15 +13,28 @@ from datetime import datetime
 import httpx
 import os
 
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+
 # =========================
 # Configuration
 # =========================
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 CHAT_DB_URL = os.getenv("CHAT_DB_URL")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
+
+# --- JWT Settings ---
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "supersecretkey123")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 2  # 2 hours
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 # =========================
 # Database Setup
@@ -54,12 +67,37 @@ class Message(Base):
 
 Base.metadata.create_all(bind=engine)
 
+# =========================
+# Security Utilities
+# =========================
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 def verify_password(password: str, hashed: str) -> bool:
     return hash_password(password) == hashed
 
+from passlib.context import CryptContext
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(password: str, hashed: str) -> bool:
+    return pwd_context.verify(password, hashed)
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def decode_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        return None
 
 # =========================
 # FastAPI Setup
@@ -89,21 +127,29 @@ class LoginRequest(BaseModel):
 class UserMessage(BaseModel):
     message: str
     bot_id: str
-    user_id: str
-
 
 class BotResponse(BaseModel):
     response: str
     message_id: str
 
-
 class FeedbackRequest(BaseModel):
     message_id: str
     bot_id: str
-    user_id: str
     rating: str | None = None
     comment: str | None = None
 
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    payload = decode_token(token)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user_id: str = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token: no user_id")
+    return user_id
 
 # =========================
 # Routes
@@ -114,16 +160,17 @@ def read_root():
 
 
 @app.post("/chat", response_model=BotResponse)
-async def chat_endpoint(user_data: UserMessage):
+async def chat_endpoint(user_data: UserMessage, current_user: str = Depends(get_current_user)):
     """Send user's message to OpenRouter and return the model's response."""
+    user_id = current_user  # use authenticated user's ID instead of request body
     if user_data:
-        print(f"[User {user_data.user_id}] to [{user_data.bot_id}]: {user_data.message}")
+        print(f"[User {user_id}] to [{user_data.bot_id}]: {user_data.message}")
 
     # Store user's message
     session = SessionLocal()
     user_message = Message(
         id=str(uuid4()),
-        user_id=user_data.user_id,
+        user_id=user_id,
         bot_id=user_data.bot_id,
         sender="user",
         text=user_data.message,
@@ -158,12 +205,12 @@ async def chat_endpoint(user_data: UserMessage):
 
     # Create bot message ID
     message_id = str(uuid4())
-    print(f"[Bot {user_data.bot_id}] to [{user_data.user_id}]: {reply} (Message ID: {message_id})")
+    print(f"[Bot {user_data.bot_id}] to [{user_id}]: {reply} (Message ID: {message_id})")
 
     # Store bot message
     bot_message = Message(
         id=message_id,
-        user_id=user_data.user_id,
+        user_id=user_id,
         bot_id=user_data.bot_id,
         sender="bot",
         text=reply,
@@ -176,9 +223,10 @@ async def chat_endpoint(user_data: UserMessage):
 
 
 @app.post("/feedback")
-def feedback(req: FeedbackRequest):
+def feedback(req: FeedbackRequest, current_user: str = Depends(get_current_user)):
     """Store feedback for a specific bot message."""
     session = SessionLocal()
+    user_id = current_user
     message = session.query(Message).filter_by(id=req.message_id).first()
     if message:
         message.rating = req.rating
@@ -215,12 +263,19 @@ def login(req: LoginRequest):
     if not user or not verify_password(req.password, user.password_hash):
         session.close()
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+    
+    access_token = create_access_token({"sub": user.id})
     session.close()
-    return {"user_id": user.id, "username": user.username}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": user.id,
+        "username": user.username,
+    }
 
 
-@app.get("/history/{user_id}")
-def get_chat_history(user_id: str):
+@app.get("/history")
+def get_chat_history(user_id: str = Depends(get_current_user)):
     session = SessionLocal()
     messages = (
         session.query(Message)

@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { BotProfile, ChatMessage } from '../types/chat';
 import ChatWindow from '../components/ChatWindow';
 import BotSelector from '../components/BotSelector';
-import { fetchBotResponse, sendFeedback } from '../services/chatService';
-import { getChatHistory } from "../services/authService";
+import { fetchBotResponse, sendFeedback, getChatHistory } from '../services/chatService';
+import { getToken } from "../services/authService";
 
 
 const BOTS: BotProfile[] = [
@@ -31,15 +31,19 @@ export default function ChatPage() {
   const [chatHistories, setChatHistories] = useState(createInitialHistories());
   const [isBotLoading, setIsBotLoading] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const storedUserId = localStorage.getItem("user_id");
-  const [userId, setUserId] = useState(storedUserId || "");
 
   useEffect(() => {
-  if (!userId) return;
+  const token = getToken();
+  if (!token) return;
 
   // Load chat history for this user
-  getChatHistory(userId)
+  getChatHistory()
     .then((messages) => {
+      if (!messages || messages.length === 0) {
+        console.log("No previous history for this user.");
+        // setChatHistories(createInitialHistories()); // or leave as empty
+        return;
+      }
       const historiesByBot: Record<string, ChatMessage[]> = {};
       messages.forEach((msg: any) => {
         if (!historiesByBot[msg.bot_id]) historiesByBot[msg.bot_id] = [];
@@ -54,7 +58,7 @@ export default function ChatPage() {
       setChatHistories((prev) => ({ ...prev, ...historiesByBot }));
     })
     .catch((err) => console.error("Failed to load history:", err));
-  }, [userId]);
+  }, []);
   
 
   const activeBot = BOTS.find(b => b.id === activeBotId)!;
@@ -68,9 +72,9 @@ export default function ChatPage() {
     }));
 
     setIsBotLoading(true);
-    const { text: botReply, messageId } = await fetchBotResponse(text, activeBot.id, userId);
+    const { text: botReply, message_id } = await fetchBotResponse(text, activeBot.id);
     const newBotMessage: ChatMessage = {
-      id: messageId,
+      id: message_id,
       sender: 'bot',
       text: botReply,
       rating: null,
@@ -96,9 +100,8 @@ export default function ChatPage() {
     const targetMsg = chatHistories[activeBotId].find(m => m.id === id);
     const finalRating = targetMsg?.rating === rating ? null : rating; // toggle logic
     sendFeedback({
-        messageId: id,
-        botId: activeBotId,
-        userId,
+        message_id: id,
+        bot_id: activeBotId,
         rating: finalRating,
         comment: targetMsg?.comment || null,
     });
@@ -113,9 +116,8 @@ export default function ChatPage() {
     });
     const targetMsg = chatHistories[activeBotId].find(m => m.id === id);
     sendFeedback({
-        messageId: id,
-        botId: activeBotId,
-        userId,
+        message_id: id,
+        bot_id: activeBotId,
         rating: targetMsg?.rating || null,
         comment: comment.trim() || null,
     });

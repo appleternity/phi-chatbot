@@ -42,3 +42,7 @@ ruff>=0.8.0
 mypy>=1.13.0
 
 accelerate
+
+# Security dependencies (for annotation user auth)
+python-jose[cryptography]
+passlib[argon2]
