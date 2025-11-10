@@ -1,5 +1,5 @@
 """API endpoints for medical chatbot."""
 
-from app.api import chat, streaming
+from app.api.streaming import router as streaming_router
 
-__all__ = ["chat", "streaming"]
+__all__ = ["streaming_router"]

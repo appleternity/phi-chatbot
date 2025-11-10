@@ -10,6 +10,7 @@ Source: specs/003-sse-streaming/contracts/streaming_api.py
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
 from typing import AsyncIterator
+from datetime import datetime
 import asyncio
 import logging
 
@@ -137,8 +138,8 @@ async def stream_chat_events(
 
                 # Token streaming (FR-001, FR-002, FR-003)
                 if event_type == "on_chat_model_stream":
-                    # Filter: Only stream from rag_agent, skip supervisor
-                    if node_name == "rag_agent":
+                    # Filter: Stream from rag_agent and emotional_support, skip supervisor
+                    if node_name in ["rag_agent", "emotional_support"]:
                         token = event["data"]["chunk"].content or ""
                         if token:
                             # Update session tracking
@@ -174,9 +175,10 @@ async def stream_chat_events(
 
         # Stream completed successfully (FR-011)
         session.mark_completed()
+        duration = datetime.utcnow().timestamp() - session.start_time
         logger.info(
             f"Stream completed: session={request.session_id}, "
-            f"tokens={session.token_count}, duration={(session.start_time):.2f}s"
+            f"tokens={session.token_count}, duration={duration:.2f}s"
         )
         yield create_done_event().to_sse_format()
 

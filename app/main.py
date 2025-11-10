@@ -17,7 +17,7 @@ import uuid
 from typing import Optional
 
 # Import routers
-from app.api import streaming
+from app.api import streaming_router
 
 # Configure logging
 logging.basicConfig(
@@ -188,7 +188,7 @@ app.add_middleware(
 )
 
 # Register router
-app.include_router(streaming.router)
+app.include_router(streaming_router)
 
 
 # Dependency to get session store

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 llm = create_llm(temperature=1.0)
 
-def emotional_support_node(state: MedicalChatState) -> Command[Literal[END]]:
+async def emotional_support_node(state: MedicalChatState) -> Command[Literal[END]]:
     """Emotional support agent that provides empathetic conversation.
 
     This agent focuses on active listening and emotional validation.
@@ -28,8 +28,8 @@ def emotional_support_node(state: MedicalChatState) -> Command[Literal[END]]:
 
     logger.debug(f"Session {state['session_id']}: Emotional support agent responding")
 
-    # Generate response
-    response = llm.invoke(messages)
+    # Generate response (async invocation for proper streaming with astream_events)
+    response = await llm.ainvoke(messages)
 
     # Return command with response
     return Command(goto=END, update={"messages": [response]})
