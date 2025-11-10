@@ -1,18 +1,12 @@
-import { useState } from 'react';
-import { SingleChatPage } from './pages/SingleChatPage';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import ChatPage from './pages/ChatPage';
 
-function App() {
-  const [sessionId] = useState(() => {
-    const id = crypto.randomUUID();
-    return id;
-  });
-
+export default function App() {
   return (
-    <ErrorBoundary>
-      <SingleChatPage sessionId={sessionId} />
-    </ErrorBoundary>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<ChatPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
-
-export default App;
