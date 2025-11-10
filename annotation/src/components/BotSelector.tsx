@@ -34,7 +34,7 @@ export default function BotSelector({ bots, activeBotId, onSelectBot }: BotSelec
             </div>
             <div>
               <div className="text-sm">{bot.name}</div>
-              <p className="text-xs text-gray-500 truncate">{bot.description}</p>
+              {/* <p className="text-xs text-gray-500 truncate">{bot.description}</p> */}
             </div>
           </button>
         ))}

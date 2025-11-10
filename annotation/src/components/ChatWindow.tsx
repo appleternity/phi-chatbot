@@ -64,12 +64,12 @@ export default function ChatWindow({
         </div>
         <div>
           <h2 className="text-lg font-semibold text-gray-900">{bot.name}</h2>
-          <p className="text-sm text-gray-500">{bot.description}</p>
+          {/* <p className="text-sm text-gray-500">{bot.description}</p> */}
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 p-6 space-y-4 overflow-y-auto">
+      <div className="flex-1 p-6 space-y-4 overflow-y-auto whitespace-pre-wrap">
         {history.map((msg) => (
           <div key={msg.id} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
             <div className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
