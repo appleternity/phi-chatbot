@@ -8,7 +8,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.types import Command
 from langgraph.graph import END
 from app.graph.state import MedicalChatState
-from app.core.retriever import DocumentRetriever
+from app.retrieval import SimpleRetriever, RerankRetriever, AdvancedRetriever
 from app.agents.base import create_llm
 from app.utils.prompts import RAG_AGENT_PROMPT
 from app.config import settings
@@ -98,7 +98,7 @@ Based on the retrieved information above, provide a comprehensive answer.""")
     return Command(goto=END, update={"messages": [response]})
 
 
-def create_rag_node(retriever: DocumentRetriever):
+def create_rag_node(retriever: SimpleRetriever | RerankRetriever | AdvancedRetriever):
     """Factory function to create RAG node with closure-captured dependencies.
 
     Simplified architecture:
