@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -17,6 +17,8 @@ from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+
+from app.prompts import BOT_PROMPTS
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
@@ -182,6 +184,7 @@ async def chat_endpoint(user_data: UserMessage, current_user: str = Depends(get_
     if not OPENROUTER_API_KEY:
         return BotResponse(response="Error: Missing OpenRouter API key.", message_id=str(uuid4()))
 
+    system_prompt = BOT_PROMPTS[user_data.bot_id]
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -189,7 +192,7 @@ async def chat_endpoint(user_data: UserMessage, current_user: str = Depends(get_
     payload = {
         "model": DEFAULT_MODEL,
         "messages": [
-            {"role": "system", "content": f"You are {user_data.bot_id}, a helpful assistant."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_data.message},
         ],
     }

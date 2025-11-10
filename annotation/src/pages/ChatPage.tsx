@@ -7,9 +7,12 @@ import { getToken } from "../services/authService";
 
 
 const BOTS: BotProfile[] = [
-  { id: 'bot_1', name: 'Amy', avatarColor: 'bg-blue-500', description: 'Just here to chat and be supportive!', welcomeMessage: 'Hello! I am Amy. How can I assist you today?' },
-  { id: 'bot_2', name: 'Bob', avatarColor: 'bg-green-500', description: "I'm parent's best friend!", welcomeMessage: "Hey there! I'm Bob. What's on your mind?" },
-  { id: 'bot_3', name: 'Cathy', avatarColor: 'bg-indigo-500', description: "Specialized in children's mental health.", welcomeMessage: "Hello! I'm Cathy. What would you like to talk about today?" },
+  { id: 'bot_1', name: '欣宁', avatarColor: 'bg-blue-500', description: '专业咨询版', 
+    welcomeMessage: '您好，我是欣宁 🙂\n我可以陪您一起探讨孩子的情绪变化、沟通方式，或您自己在育儿中的压力。\n请放心表达，我会尽力以温和、专业的方式倾听和回应。' },
+  { id: 'bot_2', name: '小安', avatarColor: 'bg-green-500', description: '温暖陪伴版', 
+    welcomeMessage: '你好呀～我是小安😊\n有时候孩子的情绪、学习、沟通真的挺让人头疼的。\n你可以跟我聊聊最近让你最烦心或最担心的事，我们一起来想办法！'},
+  { id: 'bot_3', name: '亲子心桥', avatarColor: 'bg-indigo-500', description: "科学育儿，用“心”沟通，帮您和孩子走得更近。", 
+    welcomeMessage: '您好，很高兴能和您聊聊。作为家长，关心孩子的情绪和成长真的非常不容易。\n\n您可以把我当作一个安全、不带评判的“树洞”，和我聊聊您的困惑和担忧。我也会尽力为您提供一些科学的心理健康科普、实用的沟通技巧和初步的应对建议。\n\n您今天想从哪里开始聊起呢？' },
 ];
 
 function createInitialHistories(): Record<string, ChatMessage[]> {
