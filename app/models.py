@@ -6,11 +6,15 @@ from datetime import datetime
 
 
 class ChatRequest(BaseModel):
-    """Request model for chat endpoint."""
+    """Request model for chat endpoint.
+
+    Supports both streaming and non-streaming modes via streaming parameter.
+    """
 
     user_id: str = Field(..., description="User identifier")
     session_id: Optional[str] = Field(None, description="Session ID (None = create new)")
     message: str = Field(..., min_length=1, description="User message")
+    streaming: bool = Field(default=False, description="Enable SSE streaming (default: False)")
 
 
 class ChatResponse(BaseModel):

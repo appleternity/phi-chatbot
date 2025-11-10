@@ -1,9 +1,10 @@
 """FastAPI application for medical chatbot."""
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.models import HealthResponse, ChatRequest, ChatResponse
+from fastapi.responses import StreamingResponse
+from app.models import HealthResponse, ChatRequest, ChatResponse, ChatStreamRequest
 from app.config import settings
 from app.core.session_store import InMemorySessionStore, SessionStore, SessionData
 from app.db.connection import DatabasePool
@@ -14,10 +15,10 @@ from app.core.qwen3_reranker import Qwen3Reranker
 from app.graph.builder import build_medical_chatbot_graph
 import logging
 import uuid
-from typing import Optional
+from typing import Optional, Union
 
-# Import routers
-from app.api import streaming_router
+# Import streaming logic
+from app.api.streaming import stream_chat_events
 
 # Configure logging
 logging.basicConfig(
@@ -187,9 +188,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register router
-app.include_router(streaming_router)
-
 
 # Dependency to get session store
 def get_session_store() -> SessionStore:
@@ -207,27 +205,41 @@ async def health_check():
     return HealthResponse(status="healthy", version="0.1.0")
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat")
 async def chat(
     request: ChatRequest,
+    fastapi_request: Request,
     session_store: SessionStore = Depends(get_session_store)
-):
-    """Main chat endpoint with user-aware session management.
+) -> Union[ChatResponse, StreamingResponse]:
+    """Unified chat endpoint with streaming and non-streaming modes.
 
-    This endpoint:
+    This endpoint supports both traditional request/response and SSE streaming
+    based on the `streaming` parameter in the request.
+
+    **Non-Streaming Mode (streaming=False, default):**
     1. Creates new session with UUID if session_id is None
     2. Loads existing session and validates user ownership
     3. Constructs graph state with session data
     4. Invokes the graph (routes to appropriate agent)
     5. Updates session with results
-    6. Returns the agent's response with session_id
+    6. Returns the complete agent response with session_id
+
+    **Streaming Mode (streaming=True):**
+    1. Creates new session with UUID if session_id is None
+    2. Returns SSE stream with:
+       - Processing stage indicators (retrieval, reranking, generation)
+       - Token-by-token response streaming
+       - Error handling and cancellation support
+    3. Session updates handled within streaming logic
 
     Args:
-        request: Chat request with user_id, optional session_id, and message
+        request: Chat request with user_id, optional session_id, message, and streaming flag
+        fastapi_request: FastAPI Request object for disconnect detection
         session_store: Session store dependency
 
     Returns:
-        Chat response with session_id (new or existing), message, agent, metadata
+        - ChatResponse (JSON) if streaming=False
+        - StreamingResponse (SSE) if streaming=True
 
     Raises:
         HTTPException 404: Session not found or expired
@@ -240,7 +252,7 @@ async def chat(
             # Create new session with UUID
             session_id = str(uuid.uuid4())
             session = SessionData(session_id=session_id, user_id=request.user_id)
-            logger.info(f"🆕 New session {session_id} for user {request.user_id}")
+            logger.info(f"🆕 New session {session_id} for user {request.user_id} (streaming={request.streaming})")
         else:
             # Load existing session
             session = await session_store.get_session(request.session_id)
@@ -260,42 +272,66 @@ async def chat(
             session_id = request.session_id
             logger.info(
                 f"📂 Loaded session {session_id} for user {request.user_id}, "
-                f"agent: {session.assigned_agent}"
+                f"agent: {session.assigned_agent} (streaming={request.streaming})"
             )
 
-        # Construct graph state
-        state = MedicalChatState(
-            messages=[{"role": "user", "content": request.message}],
-            session_id=session_id,
-            assigned_agent=session.assigned_agent,
-            metadata=session.metadata,
-        )
+        # Route to streaming or non-streaming based on request parameter
+        if request.streaming:
+            # Streaming mode: Return SSE response
+            logger.info(f"🌊 Streaming mode enabled for session {session_id}")
 
-        # Invoke graph with thread_id for conversation memory
-        config = {"configurable": {"thread_id": session_id}}
-        logger.debug(f"🤖 Invoking graph for session: {session_id}")
+            # Create ChatStreamRequest for streaming logic
+            stream_request = ChatStreamRequest(
+                message=request.message,
+                session_id=session_id
+            )
 
-        result = await app_state["graph"].ainvoke(state, config)
+            return StreamingResponse(
+                stream_chat_events(stream_request, app_state["graph"], fastapi_request),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",  # Disable nginx buffering
+                }
+            )
+        else:
+            # Non-streaming mode: Traditional request/response
+            logger.info(f"📄 Non-streaming mode for session {session_id}")
 
-        # Extract response from last message
-        last_message = result["messages"][-1]
-        response_text = last_message.content
-        assigned_agent = result.get("assigned_agent", session.assigned_agent)
+            # Construct graph state
+            state = MedicalChatState(
+                messages=[{"role": "user", "content": request.message}],
+                session_id=session_id,
+                assigned_agent=session.assigned_agent,
+                metadata=session.metadata,
+            )
 
-        logger.info(f"✅ Response by {assigned_agent} for session: {session_id}")
+            # Invoke graph with thread_id for conversation memory
+            config = {"configurable": {"thread_id": session_id}}
+            logger.debug(f"🤖 Invoking graph for session: {session_id}")
 
-        # Update session
-        session.assigned_agent = assigned_agent
-        session.metadata = result.get("metadata", session.metadata)
-        await session_store.save_session(session_id, session)
+            result = await app_state["graph"].ainvoke(state, config)
 
-        # Always return session_id (whether new or existing)
-        return ChatResponse(
-            session_id=session_id,
-            message=response_text,
-            agent=assigned_agent or "supervisor",
-            metadata=result.get("metadata"),
-        )
+            # Extract response from last message
+            last_message = result["messages"][-1]
+            response_text = last_message.content
+            assigned_agent = result.get("assigned_agent", session.assigned_agent)
+
+            logger.info(f"✅ Response by {assigned_agent} for session: {session_id}")
+
+            # Update session
+            session.assigned_agent = assigned_agent
+            session.metadata = result.get("metadata", session.metadata)
+            await session_store.save_session(session_id, session)
+
+            # Always return session_id (whether new or existing)
+            return ChatResponse(
+                session_id=session_id,
+                message=response_text,
+                agent=assigned_agent or "supervisor",
+                metadata=result.get("metadata"),
+            )
 
     except HTTPException:
         # Re-raise HTTP exceptions (404, 403)

@@ -10,9 +10,10 @@ import type { Message } from '../types'
 interface ChatContainerProps {
   userId: string
   sessionId: string | null
+  streamingEnabled: boolean
 }
 
-export default function ChatContainer({ userId, sessionId }: ChatContainerProps) {
+export default function ChatContainer({ userId, sessionId, streamingEnabled }: ChatContainerProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId)
@@ -57,8 +58,39 @@ export default function ChatContainer({ userId, sessionId }: ChatContainerProps)
     }
     setMessages((prev) => [...prev, userMessage])
 
-    // Start streaming (T021) - will be refactored to support toggle
-    await streamMessage(content, currentSessionId)
+    try {
+      if (streamingEnabled) {
+        // Streaming mode: Use SSE streaming
+        await streamMessage(content, userId, currentSessionId)
+      } else {
+        // Non-streaming mode: Traditional request/response
+        setIsLoading(true)
+        const response = await sendMessage(userId, content, currentSessionId)
+
+        // Store backend-generated session_id if this was first message
+        if (currentSessionId === null) {
+          setCurrentSessionId(response.session_id)
+          setSessionId(response.session_id)
+        }
+
+        // Add assistant response
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: response.message,
+          timestamp: Date.now(),
+        }
+        setMessages((prev) => [...prev, assistantMessage])
+      }
+    } catch (error) {
+      const errorMessage: Message = {
+        role: 'error',
+        content: `Failed to get response: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
+        timestamp: Date.now(),
+      }
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   // T024: Add streaming tokens to messages when stream completes (T026: preserves session context)
@@ -216,11 +248,12 @@ export default function ChatContainer({ userId, sessionId }: ChatContainerProps)
       </div>
 
       {/* Input Area */}
-      {/* T022, T023, T025: Pass streaming state to ChatInput */}
+      {/* Pass both streaming and loading states to ChatInput */}
       <ChatInput
         onSend={handleSendMessage}
         onStop={handleStopStreaming}
         isStreaming={isStreaming}
+        isLoading={isLoading}
       />
     </div>
   )

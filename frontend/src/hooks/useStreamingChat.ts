@@ -16,7 +16,7 @@ interface UseStreamingChatReturn {
   stage: string
   isStreaming: boolean
   error: string | null
-  streamMessage: (message: string, sessionId: string) => Promise<void>
+  streamMessage: (message: string, userId: string, sessionId: string | null) => Promise<void>
   stopStreaming: () => void
   resetState: () => void
 }
@@ -99,7 +99,7 @@ export function useStreamingChat(): UseStreamingChatReturn {
    * Stream a message and accumulate tokens progressively
    * Uses fetch() + ReadableStream for POST support (T017, T020)
    */
-  const streamMessage = useCallback(async (message: string, sessionId: string) => {
+  const streamMessage = useCallback(async (message: string, userId: string, sessionId: string | null) => {
     // Reset state for new stream
     setState({
       tokens: [],
@@ -121,8 +121,10 @@ export function useStreamingChat(): UseStreamingChatReturn {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message,
+          user_id: userId,
           session_id: sessionId,
+          message,
+          streaming: true,  // Enable SSE streaming mode
         }),
         signal: abortControllerRef.current.signal,
       })
