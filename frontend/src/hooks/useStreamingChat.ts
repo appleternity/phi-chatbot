@@ -18,6 +18,7 @@ interface UseStreamingChatReturn {
   error: string | null
   streamMessage: (message: string, userId: string, sessionId: string | null) => Promise<void>
   stopStreaming: () => void
+  clearTokens: () => void
   resetState: () => void
 }
 
@@ -236,6 +237,18 @@ export function useStreamingChat(): UseStreamingChatReturn {
   }, [])
 
   /**
+   * Clear tokens after adding to message history
+   * Prevents memory leak and duplicate messages
+   */
+  const clearTokens = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      tokens: [],
+      stage: '',
+    }))
+  }, [])
+
+  /**
    * Reset state to initial values
    * Useful for clearing UI after errors
    */
@@ -256,6 +269,7 @@ export function useStreamingChat(): UseStreamingChatReturn {
     error: state.error,
     streamMessage,
     stopStreaming,
+    clearTokens,
     resetState,
   }
 }

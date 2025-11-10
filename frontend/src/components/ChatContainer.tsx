@@ -20,8 +20,8 @@ export default function ChatContainer({ userId, sessionId, streamingEnabled }: C
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // T021: Use streaming hook instead of direct API call
-  const { tokens, isStreaming, error: streamError, streamMessage, stopStreaming } = useStreamingChat()
+  // Streaming hook with stage tracking and token management
+  const { tokens, stage, isStreaming, error: streamError, streamMessage, stopStreaming, clearTokens } = useStreamingChat()
 
   // Load history from localStorage
   useEffect(() => {
@@ -93,7 +93,7 @@ export default function ChatContainer({ userId, sessionId, streamingEnabled }: C
     }
   }
 
-  // T024: Add streaming tokens to messages when stream completes (T026: preserves session context)
+  // Add streaming tokens to messages when stream completes
   useEffect(() => {
     if (!isStreaming && tokens.length > 0) {
       // Stream completed - add assistant message with accumulated tokens
@@ -103,8 +103,11 @@ export default function ChatContainer({ userId, sessionId, streamingEnabled }: C
         timestamp: Date.now(),
       }
       setMessages((prev) => [...prev, assistantMessage])
+
+      // Clear tokens after adding to prevent memory leak and duplicates
+      clearTokens()
     }
-  }, [isStreaming, tokens])
+  }, [isStreaming, tokens, clearTokens])  // Effect runs on streaming state changes
 
   // Handle stream errors
   useEffect(() => {
@@ -233,16 +236,45 @@ export default function ChatContainer({ userId, sessionId, streamingEnabled }: C
         {messages.map((message, index) => (
           <ChatMessage key={index} message={message} />
         ))}
-        {/* T024: Progressive token rendering - show streaming tokens in real-time */}
+        {/* Progressive token rendering with stage indicators */}
         {isStreaming && (
-          <div className="flex justify-start mb-4">
-            <div className="max-w-[75%] bg-white rounded-2xl px-5 py-3 shadow-md border border-gray-200">
-              <div className="text-gray-800 whitespace-pre-wrap">
-                {tokens.join('')}
-                <span className="inline-block w-2 h-4 bg-primary-500 ml-1 animate-pulse"></span>
+          <>
+            {/* Stage Indicator - Only show during streaming */}
+            {stage && (
+              <div className="flex justify-start mb-2 animate-fade-in">
+                <div className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-xs font-medium flex items-center gap-1.5 shadow-sm border border-blue-100">
+                  {stage === 'retrieval' && (
+                    <>
+                      <span className="animate-pulse">🔍</span>
+                      <span>Searching knowledge base...</span>
+                    </>
+                  )}
+                  {stage === 'reranking' && (
+                    <>
+                      <span className="animate-pulse">🤔</span>
+                      <span>Analyzing context...</span>
+                    </>
+                  )}
+                  {stage === 'generation' && (
+                    <>
+                      <span className="animate-pulse">✍️</span>
+                      <span>Writing response...</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Streaming Message */}
+            <div className="flex justify-start mb-4">
+              <div className="max-w-[75%] bg-white rounded-2xl px-5 py-3 shadow-md border border-gray-200">
+                <div className="text-gray-800 whitespace-pre-wrap">
+                  {tokens.join('')}
+                  <span className="inline-block w-2 h-4 bg-primary-500 ml-1 animate-pulse"></span>
+                </div>
               </div>
             </div>
-          </div>
+          </>
         )}
         <div ref={messagesEndRef} />
       </div>
