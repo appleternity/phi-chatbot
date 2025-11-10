@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from "react";
 import { BotProfile, ChatMessage } from '../types/chat';
 import ChatWindow from '../components/ChatWindow';
 import BotSelector from '../components/BotSelector';
 import { fetchBotResponse, sendFeedback } from '../services/chatService';
+import { getChatHistory } from "../services/authService";
+
 
 const BOTS: BotProfile[] = [
   { id: 'bot_1', name: 'Amy', avatarColor: 'bg-blue-500', description: 'Just here to chat and be supportive!', welcomeMessage: 'Hello! I am Amy. How can I assist you today?' },
@@ -29,7 +31,31 @@ export default function ChatPage() {
   const [chatHistories, setChatHistories] = useState(createInitialHistories());
   const [isBotLoading, setIsBotLoading] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [userId] = useState(() => crypto.randomUUID());
+  const storedUserId = localStorage.getItem("user_id");
+  const [userId, setUserId] = useState(storedUserId || "");
+
+  useEffect(() => {
+  if (!userId) return;
+
+  // Load chat history for this user
+  getChatHistory(userId)
+    .then((messages) => {
+      const historiesByBot: Record<string, ChatMessage[]> = {};
+      messages.forEach((msg: any) => {
+        if (!historiesByBot[msg.bot_id]) historiesByBot[msg.bot_id] = [];
+        historiesByBot[msg.bot_id].push({
+          id: msg.id,
+          sender: msg.sender,
+          text: msg.text,
+          rating: msg.rating,
+          comment: msg.comment,
+        });
+      });
+      setChatHistories((prev) => ({ ...prev, ...historiesByBot }));
+    })
+    .catch((err) => console.error("Failed to load history:", err));
+  }, [userId]);
+  
 
   const activeBot = BOTS.find(b => b.id === activeBotId)!;
   const activeHistory = chatHistories[activeBotId];

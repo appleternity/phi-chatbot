@@ -1,10 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from uuid import uuid4
 from sqlalchemy import create_engine, Column, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
+from datetime import datetime
+from uuid import uuid4
+import hashlib
+
 from datetime import datetime
 import httpx
 import os
@@ -26,21 +30,36 @@ Base = declarative_base()
 engine = create_engine(CHAT_DB_URL)
 SessionLocal = sessionmaker(bind=engine)
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    username = Column(String, unique=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    messages = relationship("Message", back_populates="user")
+
 
 class Message(Base):
     __tablename__ = "messages"
 
     id = Column(String, primary_key=True, index=True)
-    user_id = Column(String, index=True)
+    user_id = Column(String, ForeignKey("users.id"))
     bot_id = Column(String, index=True)
-    sender = Column(String)  # "user" or "bot"
+    sender = Column(String)
     text = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     rating = Column(String, nullable=True)
     comment = Column(Text, nullable=True)
-
+    user = relationship("User", back_populates="messages")
 
 Base.metadata.create_all(bind=engine)
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(password: str, hashed: str) -> bool:
+    return hash_password(password) == hashed
+
 
 # =========================
 # FastAPI Setup
@@ -59,6 +78,14 @@ app.add_middleware(
 # =========================
 # Pydantic Models
 # =========================
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 class UserMessage(BaseModel):
     message: str
     bot_id: str
@@ -131,7 +158,7 @@ async def chat_endpoint(user_data: UserMessage):
 
     # Create bot message ID
     message_id = str(uuid4())
-    print(f"[{message_id}] [Bot {user_data.bot_id}] to [{user_data.user_id}]: {reply}")
+    print(f"[Bot {user_data.bot_id}] to [{user_data.user_id}]: {reply} (Message ID: {message_id})")
 
     # Store bot message
     bot_message = Message(
@@ -163,3 +190,55 @@ def feedback(req: FeedbackRequest):
     else:
         session.close()
         return {"status": "error", "message": "Message not found."}
+
+
+@app.post("/register")
+def register(req: RegisterRequest):
+    session = SessionLocal()
+    existing = session.query(User).filter_by(username=req.username).first()
+    if existing:
+        session.close()
+        raise HTTPException(status_code=400, detail="Username already exists.")
+    
+    new_user = User(username=req.username, password_hash=hash_password(req.password))
+    session.add(new_user)
+    session.commit()
+    session.refresh(new_user)
+    session.close()
+    return {"user_id": new_user.id, "username": new_user.username}
+
+
+@app.post("/login")
+def login(req: LoginRequest):
+    session = SessionLocal()
+    user = session.query(User).filter_by(username=req.username).first()
+    if not user or not verify_password(req.password, user.password_hash):
+        session.close()
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    session.close()
+    return {"user_id": user.id, "username": user.username}
+
+
+@app.get("/history/{user_id}")
+def get_chat_history(user_id: str):
+    session = SessionLocal()
+    messages = (
+        session.query(Message)
+        .filter(Message.user_id == user_id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+    session.close()
+
+    return [
+        {
+            "id": m.id,
+            "sender": m.sender,
+            "text": m.text,
+            "bot_id": m.bot_id,
+            "rating": m.rating,
+            "comment": m.comment,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in messages
+    ]
