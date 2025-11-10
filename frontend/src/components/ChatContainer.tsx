@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import ChatMessage from './ChatMessage'
 import ChatInput from './ChatInput'
 import WelcomeMessage from './WelcomeMessage'
-import { sendMessage } from '../services/api'
+import { useStreamingChat } from '../hooks/useStreamingChat'
 import type { Message } from '../types'
 
 interface ChatContainerProps {
@@ -11,8 +11,10 @@ interface ChatContainerProps {
 
 export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [messages, setMessages] = useState<Message[]>([])
-  const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // T021: Use streaming hook instead of direct API call
+  const { tokens, isStreaming, error: streamError, streamMessage, stopStreaming } = useStreamingChat()
 
   // Load history from localStorage
   useEffect(() => {
@@ -39,7 +41,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   }, [messages])
 
   const handleSendMessage = async (content: string) => {
-    if (!content.trim() || isLoading) return
+    if (!content.trim() || isStreaming) return
 
     // Add user message
     const userMessage: Message = {
@@ -48,30 +50,39 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       timestamp: Date.now(),
     }
     setMessages((prev) => [...prev, userMessage])
-    setIsLoading(true)
 
-    try {
-      const response = await sendMessage(sessionId, content)
+    // Start streaming (T021)
+    await streamMessage(content, sessionId)
+  }
 
-      // Add assistant message
+  // T024: Add streaming tokens to messages when stream completes (T026: preserves session context)
+  useEffect(() => {
+    if (!isStreaming && tokens.length > 0) {
+      // Stream completed - add assistant message with accumulated tokens
       const assistantMessage: Message = {
         role: 'assistant',
-        content: response.message,
-        agent: response.agent,
+        content: tokens.join(''),
         timestamp: Date.now(),
       }
       setMessages((prev) => [...prev, assistantMessage])
-    } catch (error) {
-      // Add error message
+    }
+  }, [isStreaming, tokens])
+
+  // Handle stream errors
+  useEffect(() => {
+    if (streamError) {
       const errorMessage: Message = {
         role: 'error',
-        content: `Failed to get response: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
+        content: `Failed to get response: ${streamError}. Please try again.`,
         timestamp: Date.now(),
       }
       setMessages((prev) => [...prev, errorMessage])
-    } finally {
-      setIsLoading(false)
     }
+  }, [streamError])
+
+  // Handle stop button click (T025)
+  const handleStopStreaming = () => {
+    stopStreaming()
   }
 
   return (
@@ -82,16 +93,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         {messages.map((message, index) => (
           <ChatMessage key={index} message={message} />
         ))}
-        {isLoading && (
+        {/* T024: Progressive token rendering - show streaming tokens in real-time */}
+        {isStreaming && (
           <div className="flex justify-start mb-4">
             <div className="max-w-[75%] bg-white rounded-2xl px-5 py-3 shadow-md border border-gray-200">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-500">💭 Thinking</span>
-                <div className="flex gap-1">
-                  <div className="w-2 h-2 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                  <div className="w-2 h-2 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                  <div className="w-2 h-2 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                </div>
+              <div className="text-gray-800 whitespace-pre-wrap">
+                {tokens.join('')}
+                <span className="inline-block w-2 h-4 bg-primary-500 ml-1 animate-pulse"></span>
               </div>
             </div>
           </div>
@@ -100,7 +108,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       </div>
 
       {/* Input Area */}
-      <ChatInput onSend={handleSendMessage} isLoading={isLoading} />
+      {/* T022, T023, T025: Pass streaming state to ChatInput */}
+      <ChatInput
+        onSend={handleSendMessage}
+        onStop={handleStopStreaming}
+        isStreaming={isStreaming}
+      />
     </div>
   )
 }
