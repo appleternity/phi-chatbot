@@ -15,7 +15,7 @@ from app.core.qwen3_reranker import Qwen3Reranker
 from app.graph.builder import build_medical_chatbot_graph
 import logging
 import uuid
-from typing import Optional, Union
+from typing import Optional
 
 # Import streaming logic
 from app.api.streaming import stream_chat_events
@@ -205,12 +205,12 @@ async def health_check():
     return HealthResponse(status="healthy", version="0.1.0")
 
 
-@app.post("/chat")
+@app.post("/chat", response_model=None)
 async def chat(
     request: ChatRequest,
     fastapi_request: Request,
     session_store: SessionStore = Depends(get_session_store)
-) -> Union[ChatResponse, StreamingResponse]:
+):
     """Unified chat endpoint with streaming and non-streaming modes.
 
     This endpoint supports both traditional request/response and SSE streaming
