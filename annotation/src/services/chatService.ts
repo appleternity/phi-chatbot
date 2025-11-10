@@ -1,4 +1,5 @@
 const FASTAPI_URL = 'http://127.0.0.1:8000/chat';
+const FEEDBACK_URL = 'http://127.0.0.1:8000/feedback';
 
 export async function fetchBotResponse(
   message: string,
@@ -17,9 +18,48 @@ export async function fetchBotResponse(
     }
 
     const data = await response.json();
-    return data.response;
+    return { text: data.response, messageId: data.message_id };
   } catch (err) {
     console.error('Error fetching from FastAPI:', err);
-    return `(Server Error) Could not connect to FastAPI at ${FASTAPI_URL}. Please ensure the server is running.`;
+    return {
+      text: `(Server Error) Could not connect to FastAPI.`,
+      messageId: crypto.randomUUID(),
+    };
+  }
+}
+
+export async function sendFeedback({
+  messageId,
+  botId,
+  userId,
+  rating,
+  comment,
+}: {
+  messageId: string;
+  botId: string;
+  userId: string;
+  rating: 'up' | 'down' | null;
+  comment?: string | null;
+}) {
+  try {
+    const response = await fetch(FEEDBACK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message_id: messageId,
+        bot_id: botId,
+        user_id: userId,
+        rating,
+        comment,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    console.log('✅ Feedback sent successfully');
+  } catch (err) {
+    console.error('Error sending feedback to FastAPI:', err);
   }
 }

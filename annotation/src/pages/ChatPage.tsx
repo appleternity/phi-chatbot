@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { BotProfile, ChatMessage } from '../types/chat';
 import ChatWindow from '../components/ChatWindow';
 import BotSelector from '../components/BotSelector';
-import { fetchBotResponse } from '../services/chatService';
+import { fetchBotResponse, sendFeedback } from '../services/chatService';
 
 const BOTS: BotProfile[] = [
   { id: 'bot_1', name: 'Amy', avatarColor: 'bg-blue-500', description: 'Just here to chat and be supportive!', welcomeMessage: 'Hello! I am Amy. How can I assist you today?' },
@@ -42,9 +42,9 @@ export default function ChatPage() {
     }));
 
     setIsBotLoading(true);
-    const botReply = await fetchBotResponse(text, activeBot.id, userId);
+    const { text: botReply, messageId } = await fetchBotResponse(text, activeBot.id, userId);
     const newBotMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: messageId,
       sender: 'bot',
       text: botReply,
       rating: null,
@@ -66,6 +66,16 @@ export default function ChatPage() {
       }));
       return { ...prev, [activeBotId]: updated };
     });
+
+    const targetMsg = chatHistories[activeBotId].find(m => m.id === id);
+    const finalRating = targetMsg?.rating === rating ? null : rating; // toggle logic
+    sendFeedback({
+        messageId: id,
+        botId: activeBotId,
+        userId,
+        rating: finalRating,
+        comment: targetMsg?.comment || null,
+    });
   };
 
   const handleSubmitComment = (id: string, comment: string) => {
@@ -74,6 +84,14 @@ export default function ChatPage() {
         msg.id === id ? { ...msg, comment: comment.trim() || null } : msg
       );
       return { ...prev, [activeBotId]: updated };
+    });
+    const targetMsg = chatHistories[activeBotId].find(m => m.id === id);
+    sendFeedback({
+        messageId: id,
+        botId: activeBotId,
+        userId,
+        rating: targetMsg?.rating || null,
+        comment: comment.trim() || null,
     });
   };
 
