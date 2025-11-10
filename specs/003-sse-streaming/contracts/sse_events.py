@@ -30,6 +30,8 @@ class StreamEvent(BaseModel):
     """
 
     type: Literal[
+        "routing_start",
+        "routing_complete",
         "retrieval_start",
         "retrieval_complete",
         "reranking_start",
@@ -196,7 +198,7 @@ class ChatStreamRequest(BaseModel):
 # Event type helpers for type-safe event creation
 
 def create_stage_event(
-    stage: Literal["retrieval", "reranking"],
+    stage: Literal["routing", "retrieval", "reranking"],
     status: Literal["started", "complete"],
     metadata: Optional[dict] = None
 ) -> StreamEvent:

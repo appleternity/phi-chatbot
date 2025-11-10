@@ -36,7 +36,7 @@ export default function Header({ sessionId, onNewSession, streamingEnabled, onSt
                 className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 focus:ring-2 cursor-pointer"
               />
               <span className="text-sm font-medium text-gray-700">
-                🌊 Streaming
+                Streaming
               </span>
             </label>
           </div>

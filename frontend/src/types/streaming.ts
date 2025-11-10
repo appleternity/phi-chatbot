@@ -2,12 +2,24 @@
  * Streaming event types matching backend StreamEvent schema
  */
 
-export type StreamEventType = 'token' | 'stage' | 'done' | 'error' | 'cancelled'
+export type StreamEventType =
+  | 'metadata'
+  | 'routing_start'
+  | 'routing_complete'
+  | 'retrieval_start'
+  | 'retrieval_complete'
+  | 'reranking_start'
+  | 'reranking_complete'
+  | 'generation_start'
+  | 'generation_complete'
+  | 'token'
+  | 'done'
+  | 'error'
+  | 'cancelled'
 
 export interface StreamEvent {
   type: StreamEventType
-  content?: string
-  stage?: string
+  content?: string | { stage?: string; status?: string; [key: string]: any }
   error?: string
   timestamp?: number
 }
@@ -21,11 +33,13 @@ export interface TokenEvent extends StreamEvent {
 }
 
 /**
- * Stage event: Processing stage transition (e.g., "rag_agent", "emotional_support")
+ * Stage event: Processing stage transition
+ * Covers routing, retrieval, reranking, and generation stages
  */
 export interface StageEvent extends StreamEvent {
-  type: 'stage'
-  stage: string
+  type: 'routing_start' | 'routing_complete' | 'retrieval_start' | 'retrieval_complete'
+       | 'reranking_start' | 'reranking_complete' | 'generation_start' | 'generation_complete'
+  content: { stage: string; status: string; [key: string]: any }
 }
 
 /**
@@ -51,6 +65,15 @@ export interface CancelledEvent extends StreamEvent {
 }
 
 /**
+ * Metadata event: Session initialization information
+ * Emitted at the start of streaming to provide session_id for persistence
+ */
+export interface MetadataEvent extends StreamEvent {
+  type: 'metadata'
+  content: { session_id: string }
+}
+
+/**
  * Type guard for token events
  */
 export function isTokenEvent(event: StreamEvent): event is TokenEvent {
@@ -59,9 +82,20 @@ export function isTokenEvent(event: StreamEvent): event is TokenEvent {
 
 /**
  * Type guard for stage events
+ * Recognizes all stage transition events: routing, retrieval, reranking, generation
  */
 export function isStageEvent(event: StreamEvent): event is StageEvent {
-  return event.type === 'stage' && typeof event.stage === 'string'
+  const stageTypes: StreamEventType[] = [
+    'routing_start',
+    'routing_complete',
+    'retrieval_start',
+    'retrieval_complete',
+    'reranking_start',
+    'reranking_complete',
+    'generation_start',
+    'generation_complete'
+  ]
+  return stageTypes.includes(event.type)
 }
 
 /**
@@ -83,4 +117,17 @@ export function isErrorEvent(event: StreamEvent): event is ErrorEvent {
  */
 export function isCancelledEvent(event: StreamEvent): event is CancelledEvent {
   return event.type === 'cancelled'
+}
+
+/**
+ * Type guard for metadata events
+ */
+export function isMetadataEvent(event: StreamEvent): event is MetadataEvent {
+  return (
+    event.type === 'metadata' &&
+    typeof event.content === 'object' &&
+    event.content !== null &&
+    'session_id' in event.content &&
+    typeof event.content.session_id === 'string'
+  )
 }

@@ -120,6 +120,8 @@ async def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
 
     # 3. Build prompt with retrieved context
     system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
+    
+    # TODO: move this to prompt.py file
     context_msg = HumanMessage(content=f"""{formatted_docs}
 
 # Conversation Context
@@ -128,7 +130,14 @@ async def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
 # User Question
 {query}
 
-Based on the retrieved information above, provide a comprehensive answer.""")
+Based on the retrieved information above, provide a comprehensive answer.
+The information is gathered from our medical knowledge base. And we are trying to answer the user's question as accurately as possible.
+If the retrieved information does not contain the answer, politely inform the user that you could not find relevant information. And ask them to rephrase or provide more details.
+
+Do not use markdown formatting in your answer. We are in a chat interface that does not support it.
+Use more conversational but still professional tone suitable for medical information.
+Do not expect the user to read long passages - summarize and synthesize the information effectively.
+They are also not medical professionals, so avoid jargon and explain concepts simply.""")
 
     # 4. Single LLM call to synthesize answer
     response = await llm.ainvoke([system_msg, context_msg])

@@ -11,17 +11,18 @@ interface ChatContainerProps {
   userId: string
   sessionId: string | null
   streamingEnabled: boolean
+  onSessionUpdate: (sessionId: string) => void
 }
 
-export default function ChatContainer({ userId, sessionId, streamingEnabled }: ChatContainerProps) {
+export default function ChatContainer({ userId, sessionId, streamingEnabled, onSessionUpdate }: ChatContainerProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Streaming hook with stage tracking and token management
-  const { tokens, stage, isStreaming, error: streamError, streamMessage, stopStreaming, clearTokens } = useStreamingChat()
+  // Streaming hook with stage tracking, token management, and session extraction
+  const { tokens, stage, isStreaming, error: streamError, sessionId: streamSessionId, streamMessage, stopStreaming, clearTokens } = useStreamingChat()
 
   // Load history from localStorage
   useEffect(() => {
@@ -47,6 +48,17 @@ export default function ChatContainer({ userId, sessionId, streamingEnabled }: C
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Persist streaming session_id when received from backend
+  useEffect(() => {
+    // Only persist if we don't have a session_id yet and streaming provided one
+    if (currentSessionId === null && streamSessionId !== null) {
+      setCurrentSessionId(streamSessionId)
+      setSessionId(streamSessionId)  // Persist to localStorage
+      onSessionUpdate(streamSessionId)  // Notify parent (App.tsx) to update Header
+      console.log(`✅ Streaming session initialized: ${streamSessionId}`)
+    }
+  }, [streamSessionId, currentSessionId, onSessionUpdate])
+
   const handleSendMessage = async (content: string) => {
     if (!content.trim() || isStreaming || isLoading || !userId) return
 
@@ -71,6 +83,7 @@ export default function ChatContainer({ userId, sessionId, streamingEnabled }: C
         if (currentSessionId === null) {
           setCurrentSessionId(response.session_id)
           setSessionId(response.session_id)
+          onSessionUpdate(response.session_id)  // Notify parent (App.tsx) to update Header
         }
 
         // Add assistant response
@@ -96,16 +109,20 @@ export default function ChatContainer({ userId, sessionId, streamingEnabled }: C
   // Add streaming tokens to messages when stream completes
   useEffect(() => {
     if (!isStreaming && tokens.length > 0) {
+      // Capture final content immediately to prevent race conditions
+      const finalContent = tokens.join('')
+
       // Stream completed - add assistant message with accumulated tokens
       const assistantMessage: Message = {
         role: 'assistant',
-        content: tokens.join(''),
+        content: finalContent,
         timestamp: Date.now(),
       }
       setMessages((prev) => [...prev, assistantMessage])
 
-      // Clear tokens after adding to prevent memory leak and duplicates
-      clearTokens()
+      // Small delay before clearing to ensure message is rendered
+      // This prevents race conditions where tokens are cleared before render
+      setTimeout(() => clearTokens(), 50)
     }
   }, [isStreaming, tokens, clearTokens])  // Effect runs on streaming state changes
 
@@ -236,45 +253,43 @@ export default function ChatContainer({ userId, sessionId, streamingEnabled }: C
         {messages.map((message, index) => (
           <ChatMessage key={index} message={message} />
         ))}
-        {/* Progressive token rendering with stage indicators */}
+        {/* Progressive token rendering with stage status */}
         {isStreaming && (
-          <>
-            {/* Stage Indicator - Only show during streaming */}
-            {stage && (
-              <div className="flex justify-start mb-2 animate-fade-in">
-                <div className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-xs font-medium flex items-center gap-1.5 shadow-sm border border-blue-100">
-                  {stage === 'retrieval' && (
-                    <>
-                      <span className="animate-pulse">🔍</span>
-                      <span>Searching knowledge base...</span>
-                    </>
-                  )}
-                  {stage === 'reranking' && (
-                    <>
-                      <span className="animate-pulse">🤔</span>
-                      <span>Analyzing context...</span>
-                    </>
-                  )}
-                  {stage === 'generation' && (
-                    <>
-                      <span className="animate-pulse">✍️</span>
-                      <span>Writing response...</span>
-                    </>
-                  )}
+          <div className="flex justify-start mb-4">
+            <div className="flex flex-col gap-1">
+              {/* Streaming Message - Show different UI based on token availability */}
+              {tokens.length > 0 ? (
+                // Show message box with content + three-dot cursor
+                <div className="max-w-[75%] bg-white text-gray-800 rounded-2xl px-5 py-3 shadow-md border border-gray-200">
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                    {tokens.join('')}
+                    {/* Three-dot typing indicator with staggered animation */}
+                    <span className="inline-flex gap-0.5 ml-1 items-end">
+                      <span className="w-1 h-1 rounded-full bg-gray-700 animate-pulse"></span>
+                      <span className="w-1 h-1 rounded-full bg-gray-700 animate-pulse" style={{ animationDelay: '0.2s' }}></span>
+                      <span className="w-1 h-1 rounded-full bg-gray-700 animate-pulse" style={{ animationDelay: '0.4s' }}></span>
+                    </span>
+                  </p>
                 </div>
-              </div>
-            )}
-
-            {/* Streaming Message */}
-            <div className="flex justify-start mb-4">
-              <div className="max-w-[75%] bg-white rounded-2xl px-5 py-3 shadow-md border border-gray-200">
-                <div className="text-gray-800 whitespace-pre-wrap">
-                  {tokens.join('')}
-                  <span className="inline-block w-2 h-4 bg-primary-500 ml-1 animate-pulse"></span>
+              ) : (
+                // Before tokens arrive, show minimal typing indicator
+                <div className="flex items-center gap-1 px-4 py-2">
+                  <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"></span>
+                  <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.1s' }}></span>
+                  <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.2s' }}></span>
                 </div>
-              </div>
+              )}
+              {/* Stage Status - Small text below message */}
+              {stage && (
+                <div className="text-xs text-gray-500 px-2">
+                  {stage === 'routing' && 'Routing...'}
+                  {stage === 'retrieval' && 'Searching knowledge base...'}
+                  {stage === 'reranking' && 'Analyzing context...'}
+                  {stage === 'generation' && 'Writing response...'}
+                </div>
+              )}
             </div>
-          </>
+          </div>
         )}
         <div ref={messagesEndRef} />
       </div>

@@ -45,6 +45,10 @@ function App() {
     setStreamingEnabled(enabled)
   }
 
+  const handleSessionUpdate = (newSessionId: string) => {
+    setCurrentSessionId(newSessionId)
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-500 to-secondary-500">
       <div className="container mx-auto px-4 py-6 h-screen flex flex-col">
@@ -58,6 +62,7 @@ function App() {
           userId={userId}
           sessionId={sessionId}
           streamingEnabled={streamingEnabled}
+          onSessionUpdate={handleSessionUpdate}
         />
       </div>
     </div>

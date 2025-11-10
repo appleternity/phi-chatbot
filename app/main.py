@@ -247,38 +247,24 @@ async def chat(
         HTTPException 500: Internal server error
     """
     try:
-        # Handle session creation or loading
-        if request.session_id is None:
-            # Create new session with UUID
-            session_id = str(uuid.uuid4())
-            session = SessionData(session_id=session_id, user_id=request.user_id)
-            logger.info(f"🆕 New session {session_id} for user {request.user_id} (streaming={request.streaming})")
-        else:
-            # Load existing session
-            session = await session_store.get_session(request.session_id)
-            if session is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Session {request.session_id} not found or expired"
-                )
+        # Import shared session utilities
+        from app.utils.session_helpers import (
+            create_or_load_session,
+            build_graph_state,
+            build_graph_config,
+            persist_session_updates
+        )
 
-            # Validate user ownership
-            if session.user_id != request.user_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Session {request.session_id} does not belong to user {request.user_id}"
-                )
-
-            session_id = request.session_id
-            logger.info(
-                f"📂 Loaded session {session_id} for user {request.user_id}, "
-                f"agent: {session.assigned_agent} (streaming={request.streaming})"
-            )
+        # Create or load session with ownership validation (shared logic)
+        session_id, session = await create_or_load_session(
+            request.session_id, request.user_id, session_store
+        )
+        logger.info(f"Session {session_id} ready (streaming={request.streaming})")
 
         # Route to streaming or non-streaming based on request parameter
         if request.streaming:
             # Streaming mode: Return SSE response
-            logger.info(f"🌊 Streaming mode enabled for session {session_id}")
+            logger.info(f"Streaming mode enabled for session {session_id}")
 
             # Create ChatStreamRequest for streaming logic
             stream_request = ChatStreamRequest(
@@ -287,7 +273,13 @@ async def chat(
             )
 
             return StreamingResponse(
-                stream_chat_events(stream_request, app_state["graph"], fastapi_request),
+                stream_chat_events(
+                    stream_request,
+                    app_state["graph"],
+                    fastapi_request,
+                    session_store,  # Pass session_store for persistence
+                    request.user_id  # Pass user_id for session creation
+                ),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -299,18 +291,14 @@ async def chat(
             # Non-streaming mode: Traditional request/response
             logger.info(f"📄 Non-streaming mode for session {session_id}")
 
-            # Construct graph state
-            state = MedicalChatState(
-                messages=[{"role": "user", "content": request.message}],
-                session_id=session_id,
-                assigned_agent=session.assigned_agent,
-                metadata=session.metadata,
-            )
+            # Build graph state using shared utility
+            state = build_graph_state(request.message, session_id, session)
 
-            # Invoke graph with thread_id for conversation memory
-            config = {"configurable": {"thread_id": session_id}}
+            # Build graph config using shared utility
+            config = build_graph_config(session_id)
             logger.debug(f"🤖 Invoking graph for session: {session_id}")
 
+            # Invoke graph with state and config
             result = await app_state["graph"].ainvoke(state, config)
 
             # Extract response from last message
@@ -320,10 +308,14 @@ async def chat(
 
             logger.info(f"✅ Response by {assigned_agent} for session: {session_id}")
 
-            # Update session
-            session.assigned_agent = assigned_agent
-            session.metadata = result.get("metadata", session.metadata)
-            await session_store.save_session(session_id, session)
+            # Persist session updates using shared utility
+            await persist_session_updates(
+                session_id,
+                session,
+                assigned_agent=assigned_agent,
+                metadata=result.get("metadata"),
+                session_store=session_store
+            )
 
             # Always return session_id (whether new or existing)
             return ChatResponse(

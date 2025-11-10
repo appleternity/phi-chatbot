@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react'
 import type { StreamEvent } from '../types/streaming'
-import { isTokenEvent, isStageEvent, isDoneEvent, isErrorEvent, isCancelledEvent } from '../types/streaming'
+import { isTokenEvent, isStageEvent, isDoneEvent, isErrorEvent, isCancelledEvent, isMetadataEvent } from '../types/streaming'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -9,6 +9,7 @@ interface StreamingState {
   stage: string
   isStreaming: boolean
   error: string | null
+  sessionId: string | null
 }
 
 interface UseStreamingChatReturn {
@@ -16,6 +17,7 @@ interface UseStreamingChatReturn {
   stage: string
   isStreaming: boolean
   error: string | null
+  sessionId: string | null
   streamMessage: (message: string, userId: string, sessionId: string | null) => Promise<void>
   stopStreaming: () => void
   clearTokens: () => void
@@ -48,6 +50,7 @@ export function useStreamingChat(): UseStreamingChatReturn {
     stage: '',
     isStreaming: false,
     error: null,
+    sessionId: null,
   })
 
   // AbortController reference for stop button (FR-018, T018)
@@ -107,6 +110,7 @@ export function useStreamingChat(): UseStreamingChatReturn {
       stage: '',
       isStreaming: true,
       error: null,
+      sessionId: null,  // Will be populated from metadata event
     })
 
     // Clear buffer from previous stream
@@ -156,7 +160,13 @@ export function useStreamingChat(): UseStreamingChatReturn {
 
         // Process each event
         for (const event of events) {
-          if (isTokenEvent(event)) {
+          if (isMetadataEvent(event)) {
+            // Extract session_id from metadata event (first event in stream)
+            setState(prev => ({
+              ...prev,
+              sessionId: event.content.session_id,
+            }))
+          } else if (isTokenEvent(event)) {
             // Accumulate token (T019, FR-001, FR-002)
             setState(prev => ({
               ...prev,
@@ -164,9 +174,12 @@ export function useStreamingChat(): UseStreamingChatReturn {
             }))
           } else if (isStageEvent(event)) {
             // Update processing stage (FR-004, FR-005)
+            // Backend sends stage in event.content.stage
+            const stageData = event.content as { stage: string; status: string }
+
             setState(prev => ({
               ...prev,
-              stage: event.stage || '',
+              stage: stageData.stage,
             }))
           } else if (isDoneEvent(event)) {
             // Stream completed
@@ -258,6 +271,7 @@ export function useStreamingChat(): UseStreamingChatReturn {
       stage: '',
       isStreaming: false,
       error: null,
+      sessionId: null,
     })
     bufferRef.current = ''
   }, [])
@@ -267,6 +281,7 @@ export function useStreamingChat(): UseStreamingChatReturn {
     stage: state.stage,
     isStreaming: state.isStreaming,
     error: state.error,
+    sessionId: state.sessionId,
     streamMessage,
     stopStreaming,
     clearTokens,

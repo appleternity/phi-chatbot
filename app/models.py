@@ -56,10 +56,15 @@ class StreamEvent(BaseModel):
     """
 
     type: Literal[
+        "metadata",
+        "routing_start",
+        "routing_complete",
         "retrieval_start",
         "retrieval_complete",
         "reranking_start",
         "reranking_complete",
+        "generation_start",
+        "generation_complete",
         "token",
         "done",
         "error",
@@ -127,7 +132,7 @@ class StreamingSession(BaseModel):
         session_id: UUID identifying the conversation session
         status: Current stream status (active, cancelled, completed, error)
         accumulated_tokens: List of tokens received so far
-        current_stage: Current processing stage (classifying, retrieval, reranking, generation)
+        current_stage: Current processing stage (routing, retrieval, reranking, generation)
         start_time: Unix timestamp when stream started
         token_count: Number of tokens emitted
         error_message: Error description if status is "error"
@@ -138,7 +143,7 @@ class StreamingSession(BaseModel):
     accumulated_tokens: list[str] = Field(default_factory=list)
     current_stage: Optional[str] = Field(
         default=None,
-        description="One of: classifying, retrieval, reranking, generation"
+        description="One of: routing, retrieval, reranking, generation"
     )
     start_time: float = Field(default_factory=lambda: datetime.utcnow().timestamp())
     token_count: int = Field(default=0, ge=0)
@@ -222,16 +227,16 @@ class ChatStreamRequest(BaseModel):
 # Event type helpers for type-safe event creation
 
 def create_stage_event(
-    stage: Literal["retrieval", "reranking"],
+    stage: Literal["routing", "retrieval", "reranking", "generation"],
     status: Literal["started", "complete"],
     metadata: Optional[dict] = None
 ) -> StreamEvent:
     """Create a stage transition event.
 
     Args:
-        stage: Processing stage name
+        stage: Processing stage name (routing, retrieval, reranking, generation)
         status: Stage status (started or complete)
-        metadata: Optional additional data (e.g., doc_count, candidates)
+        metadata: Optional additional data (e.g., doc_count, candidates, agent)
 
     Returns:
         StreamEvent with appropriate type and content
@@ -240,6 +245,9 @@ def create_stage_event(
         >>> event = create_stage_event("retrieval", "started")
         >>> event.type
         'retrieval_start'
+        >>> event = create_stage_event("generation", "started")
+        >>> event.type
+        'generation_start'
     """
     # Map "started" -> "start", keep "complete" as is
     status_suffix = "start" if status == "started" else status
@@ -295,3 +303,26 @@ def create_cancelled_event() -> StreamEvent:
         StreamEvent with type="cancelled"
     """
     return StreamEvent(type="cancelled", content={})
+
+
+def create_metadata_event(session_id: str) -> StreamEvent:
+    """Create a metadata event with session information.
+
+    Emitted at the start of streaming to provide session_id to frontend.
+    This allows the frontend to persist the session_id for subsequent requests,
+    enabling conversation continuity across multiple streaming messages.
+
+    Args:
+        session_id: Session identifier (UUID) for the conversation
+
+    Returns:
+        StreamEvent with type="metadata" and session_id in content
+
+    Example:
+        >>> event = create_metadata_event("abc-123-def")
+        >>> event.type
+        'metadata'
+        >>> event.content
+        {'session_id': 'abc-123-def'}
+    """
+    return StreamEvent(type="metadata", content={"session_id": session_id})

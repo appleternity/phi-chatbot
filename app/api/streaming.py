@@ -41,6 +41,8 @@ def get_graph():
     Raises:
         RuntimeError: If graph is not initialized.
     """
+    # TODO: this probably should not be from main. if we need it, it should be moved out of main.py
+    # TODO: import should be at top
     from app.main import app_state
 
     graph = app_state.get("graph")
@@ -55,14 +57,18 @@ async def stream_chat_events(
     request: ChatStreamRequest,
     graph,
     request_obj: Request,
+    session_store,
+    user_id: str,
 ) -> AsyncIterator[str]:
     """Generate SSE events from LangGraph execution.
 
     This is the core streaming generator that:
-    1. Creates streaming session tracker
-    2. Invokes LangGraph with astream_events()
-    3. Filters and converts events to SSE format
-    4. Handles errors and cancellation
+    1. Creates or loads session using shared utilities
+    2. Emits metadata event with session_id
+    3. Invokes LangGraph with astream_events()
+    4. Filters and converts events to SSE format
+    5. Persists session after successful completion
+    6. Handles errors and cancellation
 
     Functional Requirements:
     - FR-001: Real-time token streaming
@@ -75,6 +81,8 @@ async def stream_chat_events(
         request: Chat stream request with message and session_id
         graph: Compiled LangGraph instance
         request_obj: FastAPI Request object for disconnect detection
+        session_store: Session store for persistence
+        user_id: User ID for session creation and validation
 
     Yields:
         SSE-formatted event strings (e.g., "data: {...}\\n\\n")
@@ -82,22 +90,47 @@ async def stream_chat_events(
     Raises:
         asyncio.CancelledError: When client disconnects (must be re-raised)
     """
+    # TODO: import should be at top
+    # Import shared session utilities
+    from app.utils.session_helpers import (
+        create_or_load_session,
+        build_graph_state,
+        build_graph_config,
+        persist_session_updates
+    )
+    from app.models import create_metadata_event
+
+    # Create or load session using shared logic (consistent with non-streaming)
+    session_id, session_data = await create_or_load_session(
+        request.session_id, user_id, session_store
+    )
+
+    # Emit metadata event as FIRST event (before any processing)
+    # This allows frontend to capture session_id immediately
+    yield create_metadata_event(session_id).to_sse_format()
+
     # Create streaming session tracker
     session = StreamingSession(
-        session_id=request.session_id,
+        session_id=session_id,
         status="active"
     )
+
+    # Track assigned_agent from graph events
+    assigned_agent = session_data.assigned_agent
 
     try:
         # Timeout wrapper (FR-014: 30-second timeout)
         async with asyncio.timeout(30):
+            # Build graph state using shared utility
+            state = build_graph_state(request.message, session_id, session_data)
+
+            # Build graph config using shared utility
+            config = build_graph_config(session_id)
+
             # Invoke LangGraph with event streaming (research: astream_events v2)
             async for event in graph.astream_events(
-                {
-                    "messages": [{"role": "user", "content": request.message}],
-                    "session_id": request.session_id,
-                },
-                config={"configurable": {"thread_id": request.session_id}},
+                state,
+                config=config,
                 version="v2"  # Use v2 for better performance
             ):
                 # Check client disconnect at each iteration (FR-019)
@@ -113,15 +146,40 @@ async def stream_chat_events(
                 # Stage transitions (FR-004)
                 if event_type == "on_chain_start":
                     if node_name == "supervisor":
-                        session.update_stage("classifying")
-                        # No event emission for supervisor (silent classification)
+                        session.update_stage("routing")
+                        # Emit routing start event
+                        routing_event = create_stage_event("routing", "started")
+                        yield routing_event.to_sse_format()
 
                     elif node_name == "rag_agent":
+                        # Track assigned agent for session persistence
+                        assigned_agent = "rag_agent"
+
+                        # Emit routing complete (supervisor finished)
+                        yield create_stage_event(
+                            "routing", "complete",
+                            metadata={"assigned_agent": "rag_agent"}
+                        ).to_sse_format()
+
                         session.update_stage("retrieval")
                         stage_event = create_stage_event(
                             "retrieval", "started"
                         )
                         yield stage_event.to_sse_format()
+
+                    elif node_name == "emotional_support":
+                        # Track assigned agent for session persistence
+                        assigned_agent = "emotional_support"
+
+                        # Emit routing complete (supervisor finished)
+                        yield create_stage_event(
+                            "routing", "complete",
+                            metadata={"assigned_agent": "emotional_support"}
+                        ).to_sse_format()
+
+                        # Emotional support goes directly to generation (no retrieval/reranking)
+                        session.update_stage("generation")
+                        yield create_stage_event("generation", "started").to_sse_format()
 
                 # Retrieval completion (estimated from reranking start)
                 if event_type == "on_chain_start" and "rerank" in node_name.lower():
@@ -176,9 +234,20 @@ async def stream_chat_events(
         # Stream completed successfully (FR-011)
         session.mark_completed()
         duration = datetime.utcnow().timestamp() - session.start_time
+
+        # Persist session updates using shared utility (consistent with non-streaming)
+        await persist_session_updates(
+            session_id,
+            session_data,
+            assigned_agent=assigned_agent,
+            metadata=session_data.metadata,  # Keep existing metadata
+            session_store=session_store
+        )
+
         logger.info(
-            f"Stream completed: session={request.session_id}, "
-            f"tokens={session.token_count}, duration={duration:.2f}s"
+            f"Stream completed: session={session_id}, "
+            f"tokens={session.token_count}, duration={duration:.2f}s, "
+            f"agent={assigned_agent}"
         )
         yield create_done_event().to_sse_format()
 
@@ -222,6 +291,7 @@ async def chat(
     fastapi_request: Request,
     graph = Depends(get_graph),
 ) -> StreamingResponse:
+    # TODO: we are not using this anymore? If yes, consider removing it.
     """SSE streaming endpoint for real-time chat responses.
 
     This endpoint:
