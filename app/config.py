@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     index_path: str = "data/embeddings/"  # Path to pre-computed medical embeddings
 
     # Retrieval Settings
-    top_k_documents: int = 3
+    top_k_documents: int = 5
 
     # PostgreSQL + pgvector Settings (002-semantic-search)
     postgres_host: str = "localhost"
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
 
     # Retrieval Strategy Configuration
     # Options: "simple" (no reranking), "rerank" (two-stage), "advanced" (query expansion + rerank)
-    RETRIEVAL_STRATEGY: str = "simple"
+    RETRIEVAL_STRATEGY: str = "advanced"
 
     # Model Loading Configuration
     # True = load models at startup, False = lazy load on first use

@@ -53,7 +53,7 @@ class Qwen3Reranker:
         self,
         model_name: str = "Qwen/Qwen3-Reranker-0.6B",
         device: str = "mps",
-        batch_size: int = 8,
+        batch_size: int = 1,
         max_length: int = 8192
     ):
         """

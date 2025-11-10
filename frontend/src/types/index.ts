@@ -13,6 +13,7 @@ export interface ChatResponse {
 }
 
 export interface ChatRequest {
-  session_id: string
+  user_id: string
+  session_id: string | null
   message: string
 }

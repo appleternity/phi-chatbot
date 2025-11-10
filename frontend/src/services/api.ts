@@ -8,11 +8,16 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // 30 seconds
+  timeout: 120000, // 120 seconds (2 minutes) - increased for RAG operations
 })
 
-export async function sendMessage(sessionId: string, message: string): Promise<ChatResponse> {
+export async function sendMessage(
+  userId: string,
+  message: string,
+  sessionId: string | null
+): Promise<ChatResponse> {
   const response = await api.post<ChatResponse>('/chat', {
+    user_id: userId,
     session_id: sessionId,
     message,
   })

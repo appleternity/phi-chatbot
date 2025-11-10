@@ -8,7 +8,8 @@ from datetime import datetime
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
 
-    session_id: str = Field(..., description="Unique session identifier")
+    user_id: str = Field(..., description="User identifier")
+    session_id: Optional[str] = Field(None, description="Session ID (None = create new)")
     message: str = Field(..., min_length=1, description="User message")
 
 
