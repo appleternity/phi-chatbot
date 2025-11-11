@@ -129,7 +129,7 @@ async def lifespan(app: FastAPI):
         reranker = Qwen3Reranker(
             model_name=settings.RERANKER_MODEL,
             device="mps",
-            batch_size=1,
+            batch_size=4,  # Process 4 documents at a time to avoid MPS tensor size limits
         )
 
         if settings.PRELOAD_MODELS:

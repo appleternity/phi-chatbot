@@ -152,12 +152,13 @@ class Qwen3Reranker:
         )
         logger.info("Tokenizer loaded successfully")
 
-        # Load model with torch.float32 for MPS compatibility
+        # Load model with torch.float16 for MPS memory efficiency
+        # Recent PyTorch (2.0+) has improved MPS fp16 support
         self._model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
-            torch_dtype=torch.float32  # MPS requires float32 (no float16 support)
+            torch_dtype=torch.float16  # fp16 reduces memory usage by 50%
         ).to(self.device).eval()
-        logger.info(f"Model loaded successfully on device: {self.device}")
+        logger.info(f"Model loaded successfully on device: {self.device} (dtype: torch.float16)")
 
         # Extract token IDs for yes/no scoring
         self._token_yes_id = self._tokenizer.convert_tokens_to_ids("yes")
@@ -274,55 +275,75 @@ class Qwen3Reranker:
             for doc in documents
         ]
 
-        # Tokenize pairs
-        inputs = self._tokenizer(
-            pairs,
-            padding=True,
-            truncation='longest_first',
-            return_tensors="pt",
-            max_length=self.max_length - len(self._prefix_tokens) - len(self._suffix_tokens)
+        # Process in batches to avoid MPS tensor size limitations
+        all_scores = []
+        num_batches = (len(pairs) + self.batch_size - 1) // self.batch_size
+
+        logger.debug(
+            f"Processing {len(documents)} documents in {num_batches} batches "
+            f"(batch_size={self.batch_size})"
         )
 
-        # Add prefix and suffix tokens to each input
-        # Final format: [prefix_tokens] + [tokenized_pair] + [suffix_tokens]
-        modified_input_ids = []
-        for i, ele in enumerate(inputs['input_ids']):
-            modified_input_ids.append(
-                self._prefix_tokens + ele.tolist() + self._suffix_tokens
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * self.batch_size
+            end_idx = min(start_idx + self.batch_size, len(pairs))
+            batch_pairs = pairs[start_idx:end_idx]
+
+            # Tokenize batch
+            inputs = self._tokenizer(
+                batch_pairs,
+                padding=True,
+                truncation='longest_first',
+                return_tensors="pt",
+                max_length=self.max_length - len(self._prefix_tokens) - len(self._suffix_tokens)
             )
 
-        # Convert back to tensor
-        inputs['input_ids'] = torch.tensor(modified_input_ids, dtype=torch.long)
+            # Add prefix and suffix tokens to each input
+            # Final format: [prefix_tokens] + [tokenized_pair] + [suffix_tokens]
+            modified_input_ids = []
+            for i, ele in enumerate(inputs['input_ids']):
+                modified_input_ids.append(
+                    self._prefix_tokens + ele.tolist() + self._suffix_tokens
+                )
 
-        # Update attention mask to match new input_ids length
-        inputs['attention_mask'] = torch.ones_like(inputs['input_ids'])
+            # Convert back to tensor
+            inputs['input_ids'] = torch.tensor(modified_input_ids, dtype=torch.long)
 
-        # Move to device
-        for key in inputs:
-            inputs[key] = inputs[key].to(self.device)
+            # Update attention mask to match new input_ids length
+            inputs['attention_mask'] = torch.ones_like(inputs['input_ids'])
 
-        # Compute logits with torch.no_grad() for inference efficiency
-        outputs = self._model(**inputs)
-        batch_logits = outputs.logits[:, -1, :]  # Last token logits (yes/no prediction)
+            # Move to device
+            for key in inputs:
+                inputs[key] = inputs[key].to(self.device)
 
-        # Extract yes/no token probabilities
-        yes_logits = batch_logits[:, self._token_yes_id]
-        no_logits = batch_logits[:, self._token_no_id]
+            # Compute logits with torch.no_grad() for inference efficiency
+            with torch.no_grad():
+                outputs = self._model(**inputs)
+                batch_logits = outputs.logits[:, -1, :]  # Last token logits (yes/no prediction)
 
-        # Stack and normalize with log_softmax
-        stacked_logits = torch.stack([no_logits, yes_logits], dim=1)
-        log_probs = torch.nn.functional.log_softmax(stacked_logits, dim=1)
+                # Extract yes/no token probabilities
+                yes_logits = batch_logits[:, self._token_yes_id]
+                no_logits = batch_logits[:, self._token_no_id]
 
-        # Convert to probabilities (exp of log_probs)
-        # Extract "yes" probabilities as relevance scores
-        relevance_scores = log_probs[:, 1].exp().tolist()
+                # Stack and normalize with log_softmax
+                stacked_logits = torch.stack([no_logits, yes_logits], dim=1)
+                log_probs = torch.nn.functional.log_softmax(stacked_logits, dim=1)
+
+                # Convert to probabilities (exp of log_probs)
+                # Extract "yes" probabilities as relevance scores
+                batch_scores = log_probs[:, 1].exp().tolist()
+                all_scores.extend(batch_scores)
+
+            logger.debug(
+                f"Batch {batch_idx + 1}/{num_batches}: processed {len(batch_pairs)} documents"
+            )
 
         logger.debug(
             f"Reranked {len(documents)} documents. "
-            f"Score range: [{min(relevance_scores):.3f}, {max(relevance_scores):.3f}]"
+            f"Score range: [{min(all_scores):.3f}, {max(all_scores):.3f}]"
         )
 
-        return relevance_scores
+        return all_scores
 
     def rerank_with_metadata(
         self,
