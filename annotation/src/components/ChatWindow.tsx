@@ -64,7 +64,7 @@ export default function ChatWindow({
         </div>
         <div>
           <h2 className="text-lg font-semibold text-gray-900">{bot.name}</h2>
-          {/* <p className="text-sm text-gray-500">{bot.description}</p> */}
+          <p className="text-sm text-gray-500">{bot.description}</p>
         </div>
       </div>
 
