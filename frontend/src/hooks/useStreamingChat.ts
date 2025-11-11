@@ -3,6 +3,12 @@ import type { StreamEvent } from '../types/streaming'
 import { isTokenEvent, isStageEvent, isDoneEvent, isErrorEvent, isCancelledEvent, isMetadataEvent } from '../types/streaming'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_TOKEN = import.meta.env.VITE_CHAT_API_TOKEN
+
+// Validate token at module load time (fail-fast)
+if (!API_TOKEN) {
+  console.error('❌ VITE_CHAT_API_TOKEN is not configured. Please set it in .env file.')
+}
 
 interface StreamingState {
   tokens: string[]
@@ -124,6 +130,7 @@ export function useStreamingChat(): UseStreamingChatReturn {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(API_TOKEN && { 'Authorization': `Bearer ${API_TOKEN}` }),
         },
         body: JSON.stringify({
           user_id: userId,
@@ -134,6 +141,13 @@ export function useStreamingChat(): UseStreamingChatReturn {
         signal: abortControllerRef.current.signal,
       })
 
+      // Handle authentication errors
+      if (response.status === 401) {
+        throw new Error('Authentication failed: Invalid or expired token')
+      }
+      if (response.status === 403) {
+        throw new Error('Access denied: Insufficient permissions')
+      }
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
