@@ -1,14 +1,21 @@
-"""FastAPI SSE Streaming Endpoint.
+"""SSE Streaming Core Logic.
 
 This module implements Server-Sent Events (SSE) streaming for real-time chat responses.
 Provides token-by-token streaming with processing stage indicators.
+
+The main entry point is the stream_chat_events() function, which is used by the
+/chat endpoint in app/main.py when streaming=true.
+
+Architecture:
+- Uses Event Dispatcher pattern for clean event handling
+- Delegates LangGraph event processing to specialized handlers
+- See app/api/event_handlers/ for handler implementations
 
 Spec Reference: specs/003-sse-streaming/data-model.md
 Source: specs/003-sse-streaming/contracts/streaming_api.py
 """
 
-from fastapi import APIRouter, Request, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import Request
 from typing import AsyncIterator
 from datetime import datetime
 import asyncio
@@ -16,39 +23,21 @@ import logging
 
 from app.models import (
     ChatStreamRequest,
-    StreamEvent,
     StreamingSession,
-    create_stage_event,
-    create_token_event,
     create_done_event,
     create_error_event,
     create_cancelled_event,
+    create_metadata_event,
+)
+from app.api.event_handlers import create_event_dispatcher
+from app.utils.session_helpers import (
+    create_or_load_session,
+    build_graph_state,
+    build_graph_config,
+    persist_session_updates
 )
 
 logger = logging.getLogger(__name__)
-
-# Create router for streaming endpoints
-router = APIRouter(prefix="/chat", tags=["streaming"])
-
-
-# Dependency injection
-def get_graph():
-    """Get compiled LangGraph instance.
-
-    Returns:
-        Compiled LangGraph instance from application state.
-
-    Raises:
-        RuntimeError: If graph is not initialized.
-    """
-    # TODO: this probably should not be from main. if we need it, it should be moved out of main.py
-    # TODO: import should be at top
-    from app.main import app_state
-
-    graph = app_state.get("graph")
-    if graph is None:
-        raise RuntimeError("Graph not initialized. Check application startup.")
-    return graph
 
 
 # Core streaming implementation
@@ -90,16 +79,6 @@ async def stream_chat_events(
     Raises:
         asyncio.CancelledError: When client disconnects (must be re-raised)
     """
-    # TODO: import should be at top
-    # Import shared session utilities
-    from app.utils.session_helpers import (
-        create_or_load_session,
-        build_graph_state,
-        build_graph_config,
-        persist_session_updates
-    )
-    from app.models import create_metadata_event
-
     # Create or load session using shared logic (consistent with non-streaming)
     session_id, session_data = await create_or_load_session(
         request.session_id, user_id, session_store
@@ -115,7 +94,11 @@ async def stream_chat_events(
         status="active"
     )
 
-    # Track assigned_agent from graph events
+    # Initialize event dispatcher with all handlers
+    dispatcher = create_event_dispatcher()
+
+    # Track assigned agent for session persistence
+    # Start with existing agent from session_data (for subsequent messages)
     assigned_agent = session_data.assigned_agent
 
     try:
@@ -140,96 +123,17 @@ async def stream_chat_events(
                     yield create_cancelled_event().to_sse_format()
                     break
 
-                event_type = event["event"]
-                node_name = event["metadata"].get("langgraph_node", "")
-
-                # Stage transitions (FR-004)
-                if event_type == "on_chain_start":
-                    if node_name == "supervisor":
-                        session.update_stage("routing")
-                        # Emit routing start event
-                        routing_event = create_stage_event("routing", "started")
-                        yield routing_event.to_sse_format()
-
-                    elif node_name == "rag_agent":
-                        # Track assigned agent for session persistence
-                        assigned_agent = "rag_agent"
-
-                        # Emit routing complete (supervisor finished)
-                        yield create_stage_event(
-                            "routing", "complete",
-                            metadata={"assigned_agent": "rag_agent"}
-                        ).to_sse_format()
-
-                        session.update_stage("retrieval")
-                        stage_event = create_stage_event(
-                            "retrieval", "started"
-                        )
-                        yield stage_event.to_sse_format()
-
-                    elif node_name == "emotional_support":
-                        # Track assigned agent for session persistence
-                        assigned_agent = "emotional_support"
-
-                        # Emit routing complete (supervisor finished)
-                        yield create_stage_event(
-                            "routing", "complete",
-                            metadata={"assigned_agent": "emotional_support"}
-                        ).to_sse_format()
-
-                        # Emotional support goes directly to generation (no retrieval/reranking)
-                        session.update_stage("generation")
-                        yield create_stage_event("generation", "started").to_sse_format()
-
-                # Retrieval completion (estimated from reranking start)
-                if event_type == "on_chain_start" and "rerank" in node_name.lower():
-                    session.update_stage("reranking")
-                    # Emit retrieval complete
-                    yield create_stage_event(
-                        "retrieval", "complete",
-                        metadata={"doc_count": "unknown"}  # Can track if needed
-                    ).to_sse_format()
-                    # Emit reranking start
-                    yield create_stage_event(
-                        "reranking", "started"
-                    ).to_sse_format()
-
-                # Token streaming (FR-001, FR-002, FR-003)
-                if event_type == "on_chat_model_stream":
-                    # Filter: Stream from rag_agent and emotional_support, skip supervisor
+                # Track assigned agent from LangGraph events (for session persistence)
+                # This is coordinator's responsibility, not handlers'
+                if event["event"] == "on_chain_start":
+                    node_name = event["metadata"].get("langgraph_node", "")
                     if node_name in ["rag_agent", "emotional_support"]:
-                        token = event["data"]["chunk"].content or ""
-                        if token:
-                            # Update session tracking
-                            session.add_token(token)
-                            session.update_stage("generation")
+                        assigned_agent = node_name
 
-                            # Emit token event
-                            token_event = create_token_event(token)
-                            yield token_event.to_sse_format()
-
-                # LLM completion (marks reranking complete if not emitted yet)
-                if event_type == "on_chat_model_end":
-                    if node_name == "rag_agent":
-                        if session.current_stage == "generation":
-                            # Emit reranking complete (if not already emitted)
-                            yield create_stage_event(
-                                "reranking", "complete",
-                                metadata={"selected": "unknown"}
-                            ).to_sse_format()
-
-                # Error events (FR-010)
-                if event_type == "on_chain_error":
-                    error_data = event["data"]
-                    error_msg = str(error_data.get("error", "Unknown error"))
-                    logger.error(f"Graph error: {error_msg}, session={request.session_id}")
-
-                    session.mark_error(error_msg)
-                    yield create_error_event(
-                        "An error occurred during processing",
-                        "PROCESSING_ERROR"
-                    ).to_sse_format()
-                    break
+                # Dispatch event to appropriate handler
+                # Handlers emit SSE events and update streaming state (current_stage, token_count)
+                async for sse_event in dispatcher.dispatch(event, session):
+                    yield sse_event.to_sse_format()
 
         # Stream completed successfully (FR-011)
         session.mark_completed()
@@ -283,67 +187,3 @@ async def stream_chat_events(
             f"Stream cleanup: session={request.session_id}, "
             f"status={session.status}, tokens={session.token_count}"
         )
-
-
-@router.post("")
-async def chat(
-    request: ChatStreamRequest,
-    fastapi_request: Request,
-    graph = Depends(get_graph),
-) -> StreamingResponse:
-    # TODO: we are not using this anymore? If yes, consider removing it.
-    """SSE streaming endpoint for real-time chat responses.
-
-    This endpoint:
-    1. Validates request payload
-    2. Creates SSE streaming response
-    3. Streams processing stages and tokens
-    4. Handles errors and cancellation
-
-    Functional Requirements:
-    - FR-006: SSE as transport mechanism
-    - FR-007: Proper SSE format (data: prefix, \\n\\n delimiter)
-    - FR-011: Clean connection closure
-    - FR-014: 30-second timeout
-
-    Success Criteria:
-    - SC-001: First token within 1 second
-    - SC-002: Token latency <100ms
-    - SC-006: Support 10+ concurrent sessions
-
-    Args:
-        request: ChatStreamRequest with message and session_id
-        fastapi_request: FastAPI Request object
-        graph: LangGraph instance (dependency injection)
-
-    Returns:
-        StreamingResponse with text/event-stream content type
-
-    Raises:
-        HTTPException: If request validation fails (422)
-
-    Example Request:
-        POST /chat/stream
-        {
-            "message": "What are the side effects of aripiprazole?",
-            "session_id": "550e8400-e29b-41d4-a716-446655440000"
-        }
-
-    Example SSE Response:
-        data: {"type":"retrieval_start","content":{"stage":"retrieval","status":"started"},"timestamp":"2025-11-06T10:30:40.000Z"}
-
-        data: {"type":"token","content":"Aripiprazole","timestamp":"2025-11-06T10:30:42.100Z"}
-
-        data: {"type":"done","content":{},"timestamp":"2025-11-06T10:30:45.500Z"}
-    """
-    logger.info(f"Initiating SSE stream: session={request.session_id}")
-
-    return StreamingResponse(
-        stream_chat_events(request, graph, fastapi_request),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-        }
-    )

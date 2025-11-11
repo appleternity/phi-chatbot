@@ -13,6 +13,7 @@ from app.retrieval import get_retriever
 from src.embeddings.encoder import Qwen3EmbeddingEncoder
 from app.core.qwen3_reranker import Qwen3Reranker
 from app.graph.builder import build_medical_chatbot_graph
+from app.dependencies import get_graph, get_session_store
 import logging
 import uuid
 from typing import Optional
@@ -26,14 +27,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-# Global application state
-app_state = {
-    "graph": None,
-    "session_store": None,
-    "retriever": None,
-    "db_pool": None,
-}
 
 
 @asynccontextmanager
@@ -57,14 +50,14 @@ async def lifespan(app: FastAPI):
     # 1. Initialize session store
     logger.info("Initializing session store...")
     session_store = InMemorySessionStore(ttl_seconds=settings.session_ttl_seconds)
-    app_state["session_store"] = session_store
+    app.state.session_store = session_store
     logger.info("✅ Session store initialized")
 
     # 2. Initialize database connection pool
     logger.info("Connecting to PostgreSQL...")
     pool = DatabasePool(min_size=5, max_size=20)
     await pool.initialize()
-    app_state["db_pool"] = pool
+    app.state.db_pool = pool
 
     # 3. Verify database setup
     # Check pgvector extension
@@ -138,12 +131,12 @@ async def lifespan(app: FastAPI):
         encoder=encoder,
         reranker=reranker
     )
-    app_state["retriever"] = retriever
+    app.state.retriever = retriever
     logger.info("✅ Retriever initialized")
 
     # 6. Build graph
     logger.info("Building LangGraph...")
-    app_state["graph"] = build_medical_chatbot_graph(
+    app.state.graph = build_medical_chatbot_graph(
         retriever=retriever,
     )
     logger.info("✅ Medical chatbot graph compiled")
@@ -164,8 +157,8 @@ async def lifespan(app: FastAPI):
     # ========================================================================
     logger.info("👋 Shutting down application...")
 
-    if app_state.get("db_pool"):
-        await app_state["db_pool"].close()
+    if hasattr(app.state, "db_pool") and app.state.db_pool:
+        await app.state.db_pool.close()
         logger.info("✅ Database connection pool closed")
 
     logger.info("✅ Shutdown complete")
@@ -189,12 +182,6 @@ app.add_middleware(
 )
 
 
-# Dependency to get session store
-def get_session_store() -> SessionStore:
-    """Get session store from app state."""
-    return app_state["session_store"]
-
-
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint.
@@ -209,6 +196,7 @@ async def health_check():
 async def chat(
     request: ChatRequest,
     fastapi_request: Request,
+    graph = Depends(get_graph),
     session_store: SessionStore = Depends(get_session_store)
 ):
     """Unified chat endpoint with streaming and non-streaming modes.
@@ -275,7 +263,7 @@ async def chat(
             return StreamingResponse(
                 stream_chat_events(
                     stream_request,
-                    app_state["graph"],
+                    graph,
                     fastapi_request,
                     session_store,  # Pass session_store for persistence
                     request.user_id  # Pass user_id for session creation
@@ -299,7 +287,7 @@ async def chat(
             logger.debug(f"🤖 Invoking graph for session: {session_id}")
 
             # Invoke graph with state and config
-            result = await app_state["graph"].ainvoke(state, config)
+            result = await graph.ainvoke(state, config)
 
             # Extract response from last message
             last_message = result["messages"][-1]

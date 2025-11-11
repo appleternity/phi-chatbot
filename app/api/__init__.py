@@ -1,5 +1,7 @@
-"""API endpoints for medical chatbot."""
+"""API utilities for medical chatbot.
 
-from app.api.streaming import router as streaming_router
+The streaming module provides the core SSE streaming logic used by the /chat endpoint.
+No routers are exported from this package - all endpoints are defined in app/main.py.
+"""
 
-__all__ = ["streaming_router"]
+__all__ = []
