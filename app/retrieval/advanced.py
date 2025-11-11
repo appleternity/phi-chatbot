@@ -50,7 +50,7 @@ class AdvancedRetriever:
         self.pool = pool
         self.encoder = encoder
         self.reranker = reranker
-        self.llm = create_llm(temperature=1.0)  # For creative query variations
+        self.llm = create_llm(temperature=1.0, disable_streaming=True, tags=["internal-llm"])
 
         logger.info("AdvancedRetriever initialized (query expansion + reranking)")
 

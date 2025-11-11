@@ -10,8 +10,7 @@ This module provides command-line interface for indexing chunked documents:
 Usage:
     # Index all chunks in directory
     python -m src.embeddings.cli index \\
-        --input data/chunking_final \\
-        --config config/embedding_config.json
+        --input data/chunking_final
 
     # Index with skip-existing and custom batch size
     python -m src.embeddings.cli index \\

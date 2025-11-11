@@ -65,3 +65,20 @@ Guidelines:
 - Never make up information or guess
 
 Base your answer strictly on the retrieved information provided above."""
+
+RAG_CONTEXT_TEMPLATE = """{formatted_docs}
+
+# Conversation Context
+{conversation_history}
+
+# User Question
+{query}
+
+Based on the retrieved information above, provide a comprehensive answer.
+The information is gathered from our medical knowledge base. And we are trying to answer the user's question as accurately as possible.
+If the retrieved information does not contain the answer, politely inform the user that you could not find relevant information. And ask them to rephrase or provide more details.
+
+Do not use markdown formatting in your answer. We are in a chat interface that does not support it.
+Use more conversational but still professional tone suitable for medical information.
+Do not expect the user to read long passages - summarize and synthesize the information effectively.
+They are also not medical professionals, so avoid jargon and explain concepts simply."""

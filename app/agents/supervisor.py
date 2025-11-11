@@ -1,13 +1,16 @@
 """Supervisor agent for intent classification and routing."""
 
-from typing import Literal
-from pydantic import BaseModel, Field
-from langgraph.types import Command
-from app.graph.state import MedicalChatState
-from app.agents.base import create_llm
-from app.utils.prompts import SUPERVISOR_PROMPT
-from app.config import settings
 import logging
+from typing import Literal
+
+from langgraph.config import get_stream_writer
+from langgraph.types import Command
+from pydantic import BaseModel, Field
+
+from app.agents.base import create_llm
+from app.config import settings
+from app.graph.state import MedicalChatState
+from app.utils.prompts import SUPERVISOR_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +38,26 @@ def supervisor_node(
 
     This node only runs on the first message in a session.
 
+    Emits stage events:
+    - routing:started - When classification begins
+    - routing:complete - When agent is assigned (includes assigned_agent metadata)
+
     Args:
         state: Current graph state with user message
 
     Returns:
         Command with assigned agent name (one of: emotional_support, rag_agent)
     """
+    # Get stream writer for emitting stage events
+    writer = get_stream_writer()
+
+    # Emit routing started
+    writer({
+        "type": "stage",
+        "stage": "routing",
+        "status": "started"
+    })
+
     # Get the last user message
     last_message = state["messages"][-1]
 
@@ -55,6 +72,14 @@ def supervisor_node(
         f"(confidence: {classification.confidence:.2f})"
     )
     logger.debug(f"Classification reasoning: {classification.reasoning}")
+
+    # Emit routing complete with assigned agent
+    writer({
+        "type": "stage",
+        "stage": "routing",
+        "status": "complete",
+        "metadata": {"assigned_agent": classification.agent}
+    })
 
     # Return command with assigned agent
     return Command(

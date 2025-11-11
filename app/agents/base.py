@@ -6,7 +6,11 @@ from langchain_openai import ChatOpenAI
 from app.config import settings
 
 
-def create_llm(temperature: float = 0.7) -> BaseChatModel:
+def create_llm(
+    temperature: float = 0.7,
+    disable_streaming: bool = False,
+    tags: list[str] = None,
+) -> BaseChatModel:
     """Create LLM instance with configured settings.
 
     In test environment (TESTING=true), returns FakeChatModel for:
@@ -37,4 +41,6 @@ def create_llm(temperature: float = 0.7) -> BaseChatModel:
         api_key=settings.openai_api_key,
         model=settings.model_name,
         temperature=temperature,
+        disable_streaming=disable_streaming,
+        tags=tags
     )

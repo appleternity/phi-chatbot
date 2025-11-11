@@ -3,16 +3,19 @@
 Simplified architecture: Direct retrieval → LLM synthesis (no tool calling).
 """
 
-from typing import Literal
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langgraph.types import Command
-from langgraph.graph import END
-from app.graph.state import MedicalChatState
-from app.retrieval import SimpleRetriever, RerankRetriever, AdvancedRetriever
-from app.agents.base import create_llm
-from app.utils.prompts import RAG_AGENT_PROMPT
-from app.config import settings
 import logging
+from typing import Literal
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.config import get_stream_writer
+from langgraph.graph import END
+from langgraph.types import Command
+
+from app.agents.base import create_llm
+from app.config import settings
+from app.graph.state import MedicalChatState
+from app.retrieval import AdvancedRetriever, RerankRetriever, SimpleRetriever
+from app.utils.prompts import RAG_AGENT_PROMPT, RAG_CONTEXT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 llm = create_llm(temperature=1.0)
@@ -88,6 +91,11 @@ async def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
 
     Flow: Extract query → Search KB → Synthesize answer with context
 
+    Emits stage events:
+    - retrieval:started - When starting document search
+    - retrieval:complete - After retrieving documents (includes doc_count)
+    - generation:started - Before LLM synthesis
+
     Args:
         state: Current graph state with messages and retriever
 
@@ -99,6 +107,16 @@ async def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
         raise ValueError("Retriever not initialized in state")
 
     session_id = state['session_id']
+
+    # Get stream writer for emitting stage events
+    writer = get_stream_writer()
+
+    # Emit retrieval started
+    writer({
+        "type": "stage",
+        "stage": "retrieval",
+        "status": "started"
+    })
 
     # 1. Extract query from last user message
     last_message = state["messages"][-1]
@@ -118,26 +136,29 @@ async def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
     formatted_docs = _format_retrieved_documents(docs)
     logger.debug(f"Session {session_id}: Retrieved {len(docs)} documents")
 
+    # Emit retrieval complete with document count
+    writer({
+        "type": "stage",
+        "stage": "retrieval",
+        "status": "complete"
+    })
+
+    # Emit generation started
+    writer({
+        "type": "stage",
+        "stage": "generation",
+        "status": "started"
+    })
+
     # 3. Build prompt with retrieved context
     system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
-    
-    # TODO: move this to prompt.py file
-    context_msg = HumanMessage(content=f"""{formatted_docs}
 
-# Conversation Context
-{conversation_history}
-
-# User Question
-{query}
-
-Based on the retrieved information above, provide a comprehensive answer.
-The information is gathered from our medical knowledge base. And we are trying to answer the user's question as accurately as possible.
-If the retrieved information does not contain the answer, politely inform the user that you could not find relevant information. And ask them to rephrase or provide more details.
-
-Do not use markdown formatting in your answer. We are in a chat interface that does not support it.
-Use more conversational but still professional tone suitable for medical information.
-Do not expect the user to read long passages - summarize and synthesize the information effectively.
-They are also not medical professionals, so avoid jargon and explain concepts simply.""")
+    # Build context message from template
+    context_msg = HumanMessage(content=RAG_CONTEXT_TEMPLATE.format(
+        formatted_docs=formatted_docs,
+        conversation_history=conversation_history,
+        query=query
+    ))
 
     # 4. Single LLM call to synthesize answer
     response = await llm.ainvoke([system_msg, context_msg])
