@@ -21,6 +21,9 @@ from typing import Optional
 # Import streaming logic
 from app.api.streaming import stream_chat_events
 
+# Import authentication dependency
+from app.core.auth.dependencies import verify_bearer_token
+
 # Configure logging
 logging.basicConfig(
     level=settings.log_level,
@@ -46,6 +49,20 @@ async def lifespan(app: FastAPI):
     # ========================================================================
     # STARTUP
     # ========================================================================
+
+    # 0. Validate API Bearer Token (fail-fast if invalid)
+    logger.info("Validating API Bearer Token configuration...")
+    try:
+        token = settings.API_BEARER_TOKEN
+        # Token validation is handled by Pydantic validator in Settings class
+        # If we reach here, token passed validation (64+ hex chars)
+        logger.info(f"✅ API Bearer Token validated ({len(token)} characters)")
+    except Exception as e:
+        logger.error(f"❌ API Bearer Token validation failed: {e}")
+        logger.error(
+            "Generate a valid token using: openssl rand -hex 32"
+        )
+        raise
 
     # 1. Initialize session store
     logger.info("Initializing session store...")
@@ -197,7 +214,8 @@ async def chat(
     request: ChatRequest,
     fastapi_request: Request,
     graph = Depends(get_graph),
-    session_store: SessionStore = Depends(get_session_store)
+    session_store: SessionStore = Depends(get_session_store),
+    token: str = Depends(verify_bearer_token)
 ):
     """Unified chat endpoint with streaming and non-streaming modes.
 

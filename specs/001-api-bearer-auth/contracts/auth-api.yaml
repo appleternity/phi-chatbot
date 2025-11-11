@@ -1,0 +1,238 @@
+openapi: 3.0.3
+info:
+  title: Medical Chatbot API - Authentication
+  description: |
+    API contract for Bearer token authentication on the /chat endpoint.
+
+    This document defines the authentication requirements and error responses
+    for the medical chatbot API. All requests to /chat must include a valid
+    Bearer token in the Authorization header.
+  version: 1.0.0
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server
+
+security:
+  - BearerAuth: []
+
+paths:
+  /chat:
+    post:
+      summary: Send chat message
+      description: |
+        Send a chat message to the medical chatbot. Requires authentication
+        via Bearer token in Authorization header.
+
+        **Authentication Required**: All requests must include a valid Bearer token.
+      operationId: chat
+      tags:
+        - Chat
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            examples:
+              basic_message:
+                summary: Basic chat message
+                value:
+                  user_id: "user123"
+                  message: "What are the side effects of aspirin?"
+                  session_id: null
+                  streaming: false
+      responses:
+        '200':
+          description: Successful authentication - chat response returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+              examples:
+                success:
+                  summary: Successful chat response
+                  value:
+                    session_id: "550e8400-e29b-41d4-a716-446655440000"
+                    message: "Aspirin may cause side effects such as..."
+                    agent: "medical_rag"
+                    metadata: {}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                    example: "Internal server error"
+
+  /health:
+    get:
+      summary: Health check
+      description: Check if the API is running (no authentication required)
+      operationId: health_check
+      tags:
+        - Health
+      security: []  # No authentication required
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  version:
+                    type: string
+                    example: "0.1.0"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token
+      description: |
+        API Bearer token authentication. Include the token in the Authorization
+        header using the format: `Authorization: Bearer <your-token>`
+
+        **Example**: `Authorization: Bearer abc123def456...`
+
+        Contact your administrator to obtain an API token.
+
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - user_id
+        - message
+      properties:
+        user_id:
+          type: string
+          description: Unique identifier for the user
+          example: "user123"
+        message:
+          type: string
+          description: The chat message to send
+          example: "What are the side effects of aspirin?"
+        session_id:
+          type: string
+          nullable: true
+          description: Optional session ID for continuing a conversation
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        streaming:
+          type: boolean
+          default: false
+          description: Enable SSE streaming response
+
+    ChatResponse:
+      type: object
+      required:
+        - session_id
+        - message
+        - agent
+      properties:
+        session_id:
+          type: string
+          description: Session ID for this conversation
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        message:
+          type: string
+          description: The chatbot's response
+          example: "Aspirin may cause side effects such as..."
+        agent:
+          type: string
+          description: The agent that handled the request
+          example: "medical_rag"
+        metadata:
+          type: object
+          description: Additional metadata about the response
+          additionalProperties: true
+
+    AuthError:
+      type: object
+      required:
+        - detail
+        - error_code
+      properties:
+        detail:
+          type: string
+          description: Human-readable error message explaining the authentication failure
+          example: "Missing Authorization header"
+        error_code:
+          type: string
+          enum:
+            - MISSING_TOKEN
+            - INVALID_TOKEN
+            - MALFORMED_HEADER
+          description: |
+            Machine-readable error code for programmatic handling:
+            - `MISSING_TOKEN`: No Authorization header provided
+            - `INVALID_TOKEN`: Token doesn't match expected value
+            - `MALFORMED_HEADER`: Authorization header format is incorrect
+
+  responses:
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            missing_token:
+              summary: Missing Authorization header
+              value:
+                detail: "Missing Authorization header"
+                error_code: "MISSING_TOKEN"
+            invalid_token:
+              summary: Invalid token
+              value:
+                detail: "Invalid API token"
+                error_code: "INVALID_TOKEN"
+            malformed_header:
+              summary: Malformed Authorization header
+              value:
+                detail: "Invalid Authorization header format. Expected: Bearer {token}"
+                error_code: "MALFORMED_HEADER"
+
+  examples:
+    ValidTokenRequest:
+      summary: Valid authenticated request
+      description: Example of a properly authenticated chat request
+      value:
+        headers:
+          Authorization: "Bearer your-api-token-here-abc123def456..."
+          Content-Type: "application/json"
+        body:
+          user_id: "user123"
+          message: "What are the side effects of aspirin?"
+          streaming: false
+
+    MissingTokenRequest:
+      summary: Request without Authorization header
+      description: Example of a request missing authentication (will fail with 401)
+      value:
+        headers:
+          Content-Type: "application/json"
+        body:
+          user_id: "user123"
+          message: "What are the side effects of aspirin?"
+
+tags:
+  - name: Chat
+    description: Chat endpoints requiring authentication
+  - name: Health
+    description: Health check endpoints (no authentication required)

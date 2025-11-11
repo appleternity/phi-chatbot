@@ -2,6 +2,7 @@
 # TODO: We probably should not read .env directly.
 # In production, environment variables should be set externally.
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -67,6 +68,54 @@ class Settings(BaseSettings):
     # Model Names (standardized uppercase constants)
     EMBEDDING_MODEL: str = "Qwen/Qwen3-Embedding-0.6B"
     RERANKER_MODEL: str = "Qwen/Qwen3-Reranker-0.6B"
+
+    # API Authentication (001-api-bearer-auth)
+    API_BEARER_TOKEN: str
+
+    @field_validator("API_BEARER_TOKEN")
+    @classmethod
+    def validate_api_bearer_token(cls, v: str) -> str:
+        """Validate API Bearer token format and security requirements.
+
+        Requirements:
+        - Must be at least 64 characters (256-bit entropy minimum)
+        - Must be hexadecimal format (0-9, a-f, A-F)
+        - Whitespace is stripped automatically
+
+        Args:
+            v: The token value from environment variable
+
+        Returns:
+            str: The validated and stripped token value
+
+        Raises:
+            ValueError: If token is empty, too short, or not hexadecimal
+        """
+        # Strip whitespace
+        v = v.strip()
+
+        # Check if empty after stripping
+        if not v:
+            raise ValueError(
+                "API_BEARER_TOKEN cannot be empty. "
+                "Generate using: openssl rand -hex 32"
+            )
+
+        # Check minimum length (64 hex chars = 256-bit entropy)
+        if len(v) < 64:
+            raise ValueError(
+                f"API_BEARER_TOKEN must be at least 64 hexadecimal characters "
+                f"(got {len(v)}). Generate using: openssl rand -hex 32"
+            )
+
+        # Validate hexadecimal format (case-insensitive)
+        if not all(c in "0123456789abcdefABCDEF" for c in v):
+            raise ValueError(
+                "API_BEARER_TOKEN must contain only hexadecimal characters "
+                "(0-9, a-f, A-F). Generate using: openssl rand -hex 32"
+            )
+
+        return v
 
 
 # Global settings instance
