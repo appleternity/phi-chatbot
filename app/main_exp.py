@@ -34,7 +34,7 @@ DEFAULT_MODEL = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
 # --- JWT Settings ---
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "supersecretkey123")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 2  # 2 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 5 #60 * 2  # 2 hours
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
@@ -57,7 +57,7 @@ class User(Base):
 class Message(Base):
     __tablename__ = "messages"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     user_id = Column(String, ForeignKey("users.id"))
     bot_id = Column(String, index=True)
     sender = Column(String)
@@ -106,7 +106,7 @@ def decode_token(token: str):
 # =========================
 app = FastAPI(title="Chatbot Backend Service")
 
-origins = ["*", "http://localhost:3000", "http://127.0.0.1:3000"]
+origins = ["*", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173/"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -256,6 +256,7 @@ def register(req: RegisterRequest):
     session.commit()
     session.refresh(new_user)
     session.close()
+    print(f"Registered new user: {new_user.username} (ID: {new_user.id})")
     return {"user_id": new_user.id, "username": new_user.username}
 
 
@@ -265,10 +266,12 @@ def login(req: LoginRequest):
     user = session.query(User).filter_by(username=req.username).first()
     if not user or not verify_password(req.password, user.password_hash):
         session.close()
+        print("Failed login attempt for username:", req.username)
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     
     access_token = create_access_token({"sub": user.id})
     session.close()
+    print(f"User logged in: {user.username} (ID: {user.id})")
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -280,12 +283,45 @@ def login(req: LoginRequest):
 @app.get("/history")
 def get_chat_history(user_id: str = Depends(get_current_user)):
     session = SessionLocal()
-    messages = (
-        session.query(Message)
-        .filter(Message.user_id == user_id)
-        .order_by(Message.created_at.asc())
-        .all()
-    )
+    try:
+        messages = (
+            session.query(Message)
+            .filter(Message.user_id == user_id)
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+    except Exception as e:
+        print(f"Error fetching chat history for user {user_id}: {e}\n-----\n")
+        messages = []
+    
+    print(f"Fetched chat history for user: {user_id}, total messages: {len(messages)}")
+    if len(messages) == 0:
+        welcome_messages = [
+            {"bot_id": "bot_1", "text": "您好，我是欣宁 🙂\n我可以陪您一起探讨孩子的情绪变化、沟通方式，或您自己在育儿中的压力。\n请放心表达，我会尽力以温和、专业的方式倾听和回应。"},
+            {"bot_id": "bot_2", "text": "你好呀～我是小安😊\n有时候孩子的情绪、学习、沟通真的挺让人头疼的。\n你可以跟我聊聊最近让你最烦心或最担心的事，我们一起来想办法！"},
+            {"bot_id": "bot_3", "text": "您好，很高兴能和您聊聊。作为家长，关心孩子的情绪和成长真的非常不容易。\n\n您可以把我当作一个安全、不带评判的\"树洞\"，和我聊聊您的困惑和担忧。我也会尽力为您提供一些科学的心理健康科普、实用的沟通技巧和初步的应对建议。\n\n您今天想从哪里开始聊起呢？"},
+        ]
+        
+        for welcome in welcome_messages:
+            welcome_message = Message(
+                id=str(uuid4()),
+                user_id=user_id,
+                bot_id=welcome["bot_id"],
+                sender="bot",
+                text=welcome["text"],
+            )
+            session.add(welcome_message)
+            print('Add welcome message:', welcome_message.text)
+        
+        session.commit()
+        messages = (
+            session.query(Message)
+            .filter(Message.user_id == user_id)
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+        print(f"Initialized welcome messages for user: {user_id}")
+    
     session.close()
 
     return [
