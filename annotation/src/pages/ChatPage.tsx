@@ -8,11 +8,11 @@ import { getToken, logout } from "../services/authService";
 
 
 const BOTS: BotProfile[] = [
-  { id: 'bot_1', name: '欣宁', avatarColor: 'bg-blue-500', description: '专业咨询版', 
-    welcomeMessage: '您好，我是欣宁 🙂' },
-  { id: 'bot_2', name: '小安', avatarColor: 'bg-green-500', description: '温暖陪伴版', 
-    welcomeMessage: '你好呀～我是小安😊'},
-  { id: 'bot_3', name: '亲子心桥', avatarColor: 'bg-indigo-500', description: '科学育儿，用"心"沟通，帮您和孩子走得更近。', 
+  { id: 'bot_1', name: '理性小飞', avatarColor: 'bg-blue-500', description: '稳重、条理清晰的心理支持顾问', 
+    welcomeMessage: '您好，我是理性小飞 🙂' },
+  { id: 'bot_2', name: '共情小飞', avatarColor: 'bg-green-500', description: '像朋友一样倾听与共情', 
+    welcomeMessage: '你好呀～我是共情小飞😊'},
+  { id: 'bot_3', name: '守护小飞', avatarColor: 'bg-indigo-500', description: '和您一起守护孩子成长', 
     welcomeMessage: '您好，很高兴能和您聊聊。' },
 ];
 
@@ -94,7 +94,7 @@ export default function ChatPage() {
           if (!trimmed) return;
 
           if (!isFirstChunk) {
-            await new Promise(res => setTimeout(res, 1500));
+            await new Promise(res => setTimeout(res, 3000));
           } else {
             isFirstChunk = false;
           }
