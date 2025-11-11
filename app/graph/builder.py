@@ -16,7 +16,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from app.graph.state import MedicalChatState
 from app.agents.supervisor import supervisor_node
 from app.agents.emotional_support import emotional_support_node
-from app.agents.rag_agent import create_rag_node
+from app.agents.rag_agent import create_rag_agent
 from app.retrieval import SimpleRetriever, RerankRetriever, AdvancedRetriever
 import logging
 
@@ -84,7 +84,7 @@ def build_medical_chatbot_graph(
     logger.info("Building medical chatbot graph...")
 
     # Create nodes using factory functions (Linus: "let each module own its logic")
-    rag_node = create_rag_node(retriever)
+    rag_agent_graph = create_rag_agent(retriever)
     logger.debug("Agent nodes created via factory functions")
 
     # Build graph (Linus: "simple, linear, no special cases")
@@ -93,7 +93,7 @@ def build_medical_chatbot_graph(
     # Add all nodes
     builder.add_node("supervisor", supervisor_node)
     builder.add_node("emotional_support", emotional_support_node)
-    builder.add_node("rag_agent", rag_node)
+    builder.add_node("rag_agent", rag_agent_graph)
 
     # Define routing maps
     routing_map = {
