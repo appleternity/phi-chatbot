@@ -1,68 +1,47 @@
 """Event handler system for SSE streaming.
 
-This module provides a clean event dispatcher pattern for handling LangGraph events
+This module provides event handlers for processing LangGraph streaming events
 and converting them to SSE events for the frontend.
 
 Architecture:
-- EventDispatcher: Routes events to appropriate handlers
-- EventHandler: Protocol for all handler implementations
-- Handler Classes: Specialized handlers for different event types
+- CustomEventHandler: Handles custom events from get_stream_writer()
+- ModelStreamHandler: Handles LLM token streaming from stream_mode="messages"
 
-Handler Registration Order Matters:
-1. RerankStartHandler (most specific: "rerank" in node name)
-2. ChainStartHandler (specific: supervisor, rag_agent, emotional_support)
-3. ModelStreamHandler (token streaming)
-4. ModelEndHandler (LLM completion)
-5. ChainErrorHandler (error handling)
+Simplified Handler Architecture (using stream_mode + get_stream_writer):
+- stream_mode=["messages", "custom"] provides direct access to tokens and stage events
+- Nodes emit custom events via get_stream_writer() for stage transitions
+- Direct handler invocation (no dispatcher pattern)
+- Error handling via natural exception propagation to streaming.py try/catch
+
+Handler Usage:
+- CustomEventHandler processes stage events from stream_mode="custom"
+- ModelStreamHandler processes token streaming from stream_mode="messages"
 
 Usage:
-    from app.api.event_handlers import create_event_dispatcher
+    from app.api.event_handlers import CustomEventHandler, ModelStreamHandler
 
-    dispatcher = create_event_dispatcher()
-    async for sse_event in dispatcher.dispatch(langgraph_event, session):
+    custom_handler = CustomEventHandler()
+    model_handler = ModelStreamHandler()
+
+    # For stream_mode="custom"
+    async for sse_event in custom_handler.handle_custom(chunk, session):
         yield sse_event.to_sse_format()
+
+    # For stream_mode="messages"
+    async for sse_event in model_handler.handle_message(message, metadata, session):
+        yield sse_event.to_sse_format()
+
+Removed handlers (no longer needed):
+- ChainStartHandler - Replaced by get_stream_writer() in nodes
+- RerankStartHandler - Replaced by get_stream_writer() in nodes
+- ModelEndHandler - No longer needed with direct emission
+- ChainErrorHandler - Errors propagate to streaming.py try/catch
 """
 
-from .dispatcher import EventDispatcher
-from .base import EventHandler
-from .chain_start_handler import ChainStartHandler
-from .rerank_start_handler import RerankStartHandler
+from .custom_handler import CustomEventHandler
 from .model_stream_handler import ModelStreamHandler
-from .model_end_handler import ModelEndHandler
-from .chain_error_handler import ChainErrorHandler
 
 __all__ = [
-    "EventDispatcher",
-    "EventHandler",
-    "ChainStartHandler",
-    "RerankStartHandler",
+    "CustomEventHandler",
     "ModelStreamHandler",
-    "ModelEndHandler",
-    "ChainErrorHandler",
-    "create_event_dispatcher",
 ]
-
-
-def create_event_dispatcher() -> EventDispatcher:
-    """Create and configure event dispatcher with all handlers.
-
-    Handlers are registered in priority order:
-    1. RerankStartHandler - Most specific (rerank in node name)
-    2. ChainStartHandler - Specific nodes (supervisor, agents)
-    3. ModelStreamHandler - Token streaming
-    4. ModelEndHandler - LLM completion
-    5. ChainErrorHandler - Error handling
-
-    Returns:
-        Configured EventDispatcher ready for use
-    """
-    dispatcher = EventDispatcher()
-
-    # Register handlers in priority order (first match wins)
-    dispatcher.register(RerankStartHandler())
-    dispatcher.register(ChainStartHandler())
-    dispatcher.register(ModelStreamHandler())
-    dispatcher.register(ModelEndHandler())
-    dispatcher.register(ChainErrorHandler())
-
-    return dispatcher

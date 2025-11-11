@@ -7,8 +7,9 @@ The main entry point is the stream_chat_events() function, which is used by the
 /chat endpoint in app/main.py when streaming=true.
 
 Architecture:
-- Uses Event Dispatcher pattern for clean event handling
-- Delegates LangGraph event processing to specialized handlers
+- Direct event handler calls for custom and message events
+- CustomEventHandler processes stage transitions from get_stream_writer()
+- ModelStreamHandler processes LLM token streams for real-time display
 - See app/api/event_handlers/ for handler implementations
 
 Spec Reference: specs/003-sse-streaming/data-model.md
@@ -29,7 +30,7 @@ from app.models import (
     create_cancelled_event,
     create_metadata_event,
 )
-from app.api.event_handlers import create_event_dispatcher
+from app.api.event_handlers import CustomEventHandler, ModelStreamHandler
 from app.utils.session_helpers import (
     create_or_load_session,
     build_graph_state,
@@ -94,12 +95,9 @@ async def stream_chat_events(
         status="active"
     )
 
-    # Initialize event dispatcher with all handlers
-    dispatcher = create_event_dispatcher()
-
-    # Track assigned agent for session persistence
-    # Start with existing agent from session_data (for subsequent messages)
-    assigned_agent = session_data.assigned_agent
+    # Initialize event handlers
+    custom_handler = CustomEventHandler()
+    model_handler = ModelStreamHandler()
 
     try:
         # Timeout wrapper (FR-014: 30-second timeout)
@@ -110,11 +108,15 @@ async def stream_chat_events(
             # Build graph config using shared utility
             config = build_graph_config(session_id)
 
-            # Invoke LangGraph with event streaming (research: astream_events v2)
-            async for event in graph.astream_events(
+            # Invoke LangGraph with stream modes
+            # stream_mode=["messages", "custom"] captures:
+            # - "messages": LLM token streaming (token-by-token from user-facing LLMs)
+            # - "custom": Custom events from get_stream_writer() (stage transitions + metadata)
+            # Note: Internal LLM calls (supervisor, query expansion) use .invoke() so don't appear in stream
+            async for mode, chunk in graph.astream(
                 state,
                 config=config,
-                version="v2"  # Use v2 for better performance
+                stream_mode=["messages", "custom"]
             ):
                 # Check client disconnect at each iteration (FR-019)
                 if await request_obj.is_disconnected():
@@ -123,21 +125,26 @@ async def stream_chat_events(
                     yield create_cancelled_event().to_sse_format()
                     break
 
-                # Track assigned agent from LangGraph events (for session persistence)
-                # This is coordinator's responsibility, not handlers'
-                if event["event"] == "on_chain_start":
-                    node_name = event["metadata"].get("langgraph_node", "")
-                    if node_name in ["rag_agent", "emotional_support"]:
-                        assigned_agent = node_name
-
-                # Dispatch event to appropriate handler
+                # Process events based on stream mode
                 # Handlers emit SSE events and update streaming state (current_stage, token_count)
-                async for sse_event in dispatcher.dispatch(event, session):
-                    yield sse_event.to_sse_format()
+                # Handlers are responsible for their own filtering logic
+                if mode == "custom":
+                    async for sse_event in custom_handler.handle_custom(chunk, session):
+                        yield sse_event.to_sse_format()
+                elif mode == "messages":
+                    # chunk is a tuple: (message, metadata)
+                    message_chunk, metadata = chunk
+                    async for sse_event in model_handler.handle_message(message_chunk, metadata, session):
+                        yield sse_event.to_sse_format()
 
         # Stream completed successfully (FR-011)
         session.mark_completed()
         duration = datetime.utcnow().timestamp() - session.start_time
+
+        # Get final state to extract assigned_agent (LangGraph best practice)
+        # Supervisor sets assigned_agent in state via Command.update
+        final_state = await graph.aget_state(config)
+        assigned_agent = final_state.values.get("assigned_agent") or session_data.assigned_agent
 
         # Persist session updates using shared utility (consistent with non-streaming)
         await persist_session_updates(
