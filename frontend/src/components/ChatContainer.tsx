@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import ChatMessage from './ChatMessage'
 import ChatInput from './ChatInput'
 import WelcomeMessage from './WelcomeMessage'
+import { useStreamingChat } from '../hooks/useStreamingChat'
 import { sendMessage } from '../services/api'
 import { setSessionId } from '../utils/session'
 import type { Message } from '../types'
@@ -9,14 +10,19 @@ import type { Message } from '../types'
 interface ChatContainerProps {
   userId: string
   sessionId: string | null
+  streamingEnabled: boolean
+  onSessionUpdate: (sessionId: string) => void
 }
 
-export default function ChatContainer({ userId, sessionId }: ChatContainerProps) {
+export default function ChatContainer({ userId, sessionId, streamingEnabled, onSessionUpdate }: ChatContainerProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Streaming hook with stage tracking, token management, and session extraction
+  const { tokens, stage, isStreaming, error: streamError, sessionId: streamSessionId, streamMessage, stopStreaming, clearTokens } = useStreamingChat()
 
   // Load history from localStorage
   useEffect(() => {
@@ -42,8 +48,19 @@ export default function ChatContainer({ userId, sessionId }: ChatContainerProps)
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Persist streaming session_id when received from backend
+  useEffect(() => {
+    // Only persist if we don't have a session_id yet and streaming provided one
+    if (currentSessionId === null && streamSessionId !== null) {
+      setCurrentSessionId(streamSessionId)
+      setSessionId(streamSessionId)  // Persist to localStorage
+      onSessionUpdate(streamSessionId)  // Notify parent (App.tsx) to update Header
+      console.log(`✅ Streaming session initialized: ${streamSessionId}`)
+    }
+  }, [streamSessionId, currentSessionId, onSessionUpdate])
+
   const handleSendMessage = async (content: string) => {
-    if (!content.trim() || isLoading || !userId) return
+    if (!content.trim() || isStreaming || isLoading || !userId) return
 
     // Add user message
     const userMessage: Message = {
@@ -52,28 +69,32 @@ export default function ChatContainer({ userId, sessionId }: ChatContainerProps)
       timestamp: Date.now(),
     }
     setMessages((prev) => [...prev, userMessage])
-    setIsLoading(true)
 
     try {
-      // Backend creates session_id if currentSessionId is null
-      const response = await sendMessage(userId, content, currentSessionId)
+      if (streamingEnabled) {
+        // Streaming mode: Use SSE streaming
+        await streamMessage(content, userId, currentSessionId)
+      } else {
+        // Non-streaming mode: Traditional request/response
+        setIsLoading(true)
+        const response = await sendMessage(userId, content, currentSessionId)
 
-      // Store backend-generated session_id if this was first message
-      if (currentSessionId === null) {
-        setCurrentSessionId(response.session_id)
-        setSessionId(response.session_id)
-      }
+        // Store backend-generated session_id if this was first message
+        if (currentSessionId === null) {
+          setCurrentSessionId(response.session_id)
+          setSessionId(response.session_id)
+          onSessionUpdate(response.session_id)  // Notify parent (App.tsx) to update Header
+        }
 
-      // Add assistant message
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: response.message,
-        agent: response.agent,
-        timestamp: Date.now(),
+        // Add assistant response
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: response.message,
+          timestamp: Date.now(),
+        }
+        setMessages((prev) => [...prev, assistantMessage])
       }
-      setMessages((prev) => [...prev, assistantMessage])
     } catch (error) {
-      // Add error message
       const errorMessage: Message = {
         role: 'error',
         content: `Failed to get response: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
@@ -83,6 +104,43 @@ export default function ChatContainer({ userId, sessionId }: ChatContainerProps)
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Add streaming tokens to messages when stream completes
+  useEffect(() => {
+    if (!isStreaming && tokens.length > 0) {
+      // Capture final content immediately to prevent race conditions
+      const finalContent = tokens.join('')
+
+      // Stream completed - add assistant message with accumulated tokens
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: finalContent,
+        timestamp: Date.now(),
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+
+      // Small delay before clearing to ensure message is rendered
+      // This prevents race conditions where tokens are cleared before render
+      setTimeout(() => clearTokens(), 50)
+    }
+  }, [isStreaming, tokens, clearTokens])  // Effect runs on streaming state changes
+
+  // Handle stream errors
+  useEffect(() => {
+    if (streamError) {
+      const errorMessage: Message = {
+        role: 'error',
+        content: `Failed to get response: ${streamError}. Please try again.`,
+        timestamp: Date.now(),
+      }
+      setMessages((prev) => [...prev, errorMessage])
+    }
+  }, [streamError])
+
+  // Handle stop button click (T025)
+  const handleStopStreaming = () => {
+    stopStreaming()
   }
 
   // Export conversation history as JSON file
@@ -195,17 +253,41 @@ export default function ChatContainer({ userId, sessionId }: ChatContainerProps)
         {messages.map((message, index) => (
           <ChatMessage key={index} message={message} />
         ))}
-        {isLoading && (
+        {/* Progressive token rendering with stage status */}
+        {isStreaming && (
           <div className="flex justify-start mb-4">
-            <div className="max-w-[75%] bg-white rounded-2xl px-5 py-3 shadow-md border border-gray-200">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-500">💭 Thinking</span>
-                <div className="flex gap-1">
-                  <div className="w-2 h-2 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                  <div className="w-2 h-2 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                  <div className="w-2 h-2 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+            <div className="flex flex-col gap-1">
+              {/* Streaming Message - Show different UI based on token availability */}
+              {tokens.length > 0 ? (
+                // Show message box with content + three-dot cursor
+                <div className="max-w-[75%] bg-white text-gray-800 rounded-2xl px-5 py-3 shadow-md border border-gray-200">
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                    {tokens.join('')}
+                    {/* Three-dot typing indicator with staggered animation */}
+                    <span className="inline-flex gap-0.5 ml-1 items-end">
+                      <span className="w-1 h-1 rounded-full bg-gray-700 animate-pulse"></span>
+                      <span className="w-1 h-1 rounded-full bg-gray-700 animate-pulse" style={{ animationDelay: '0.2s' }}></span>
+                      <span className="w-1 h-1 rounded-full bg-gray-700 animate-pulse" style={{ animationDelay: '0.4s' }}></span>
+                    </span>
+                  </p>
                 </div>
-              </div>
+              ) : (
+                // Before tokens arrive, show minimal typing indicator
+                <div className="flex items-center gap-1 px-4 py-2">
+                  <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"></span>
+                  <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.1s' }}></span>
+                  <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.2s' }}></span>
+                </div>
+              )}
+              {/* Stage Status - Small text below message */}
+              {stage && (
+                <div className="text-xs text-gray-500 px-2">
+                  {stage === 'routing' && 'Routing...'}
+                  {stage === 'retrieval' && 'Searching knowledge base...'}
+                  {stage === 'reranking' && 'Analyzing context...'}
+                  {stage === 'generation' && 'Writing response...'}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -213,7 +295,13 @@ export default function ChatContainer({ userId, sessionId }: ChatContainerProps)
       </div>
 
       {/* Input Area */}
-      <ChatInput onSend={handleSendMessage} isLoading={isLoading} />
+      {/* Pass both streaming and loading states to ChatInput */}
+      <ChatInput
+        onSend={handleSendMessage}
+        onStop={handleStopStreaming}
+        isStreaming={isStreaming}
+        isLoading={isLoading}
+      />
     </div>
   )
 }

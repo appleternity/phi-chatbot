@@ -3,9 +3,17 @@ import { RefreshCw } from 'lucide-react'
 interface HeaderProps {
   sessionId: string
   onNewSession: () => void
+  streamingEnabled: boolean
+  onStreamingToggle: (enabled: boolean) => void
 }
 
-export default function Header({ sessionId, onNewSession }: HeaderProps) {
+export default function Header({ sessionId, onNewSession, streamingEnabled, onStreamingToggle }: HeaderProps) {
+  const handleToggle = () => {
+    const newValue = !streamingEnabled
+    onStreamingToggle(newValue)
+    localStorage.setItem('streaming_enabled', String(newValue))
+  }
+
   return (
     <div className="bg-white rounded-t-2xl shadow-lg px-6 py-5">
       <div className="flex items-center justify-between">
@@ -18,6 +26,21 @@ export default function Header({ sessionId, onNewSession }: HeaderProps) {
           </p>
         </div>
         <div className="flex items-center gap-4">
+          {/* Streaming Toggle */}
+          <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
+            <label className="flex items-center gap-2 cursor-pointer" title="Enable real-time token streaming">
+              <input
+                type="checkbox"
+                checked={streamingEnabled}
+                onChange={handleToggle}
+                className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 focus:ring-2 cursor-pointer"
+              />
+              <span className="text-sm font-medium text-gray-700">
+                Streaming
+              </span>
+            </label>
+          </div>
+
           <div className="text-right">
             <p className="text-xs text-gray-500 mb-1">Session ID</p>
             <code className="text-xs bg-gray-100 px-3 py-1 rounded-md font-mono text-gray-700">

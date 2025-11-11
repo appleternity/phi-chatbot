@@ -1,41 +1,15 @@
-"""Pydantic models for API requests and responses."""
+"""SSE Event Type Definitions and Schemas.
 
-from typing import Optional, Literal, Union
+This module defines Pydantic models for all Server-Sent Event types used in
+the streaming chat endpoint. These schemas ensure type safety and validation
+for events flowing from backend to frontend.
+
+Spec Reference: specs/003-sse-streaming/data-model.md
+"""
+
 from pydantic import BaseModel, Field
+from typing import Literal, Union, Optional
 from datetime import datetime
-
-
-class ChatRequest(BaseModel):
-    """Request model for chat endpoint.
-
-    Supports both streaming and non-streaming modes via streaming parameter.
-    """
-
-    user_id: str = Field(..., description="User identifier")
-    session_id: Optional[str] = Field(None, description="Session ID (None = create new)")
-    message: str = Field(..., min_length=1, description="User message")
-    streaming: bool = Field(default=False, description="Enable SSE streaming (default: False)")
-
-
-class ChatResponse(BaseModel):
-    """Response model for chat endpoint."""
-
-    session_id: str = Field(..., description="Session identifier")
-    message: str = Field(..., description="Agent response")
-    agent: str = Field(..., description="Agent that handled the message")
-    metadata: Optional[dict] = Field(default=None, description="Additional metadata")
-
-
-class HealthResponse(BaseModel):
-    """Health check response."""
-
-    status: str = "healthy"
-    version: str = "0.1.0"
-
-
-# ============================================================================
-# SSE Streaming Models (specs/003-sse-streaming/contracts/sse_events.py)
-# ============================================================================
 
 
 class StreamEvent(BaseModel):
@@ -56,15 +30,12 @@ class StreamEvent(BaseModel):
     """
 
     type: Literal[
-        "metadata",
         "routing_start",
         "routing_complete",
         "retrieval_start",
         "retrieval_complete",
         "reranking_start",
         "reranking_complete",
-        "generation_start",
-        "generation_complete",
         "token",
         "done",
         "error",
@@ -132,7 +103,7 @@ class StreamingSession(BaseModel):
         session_id: UUID identifying the conversation session
         status: Current stream status (active, cancelled, completed, error)
         accumulated_tokens: List of tokens received so far
-        current_stage: Current processing stage (routing, retrieval, reranking, generation)
+        current_stage: Current processing stage (classifying, retrieval, reranking, generation)
         start_time: Unix timestamp when stream started
         token_count: Number of tokens emitted
         error_message: Error description if status is "error"
@@ -143,7 +114,7 @@ class StreamingSession(BaseModel):
     accumulated_tokens: list[str] = Field(default_factory=list)
     current_stage: Optional[str] = Field(
         default=None,
-        description="One of: routing, retrieval, reranking, generation"
+        description="One of: classifying, retrieval, reranking, generation"
     )
     start_time: float = Field(default_factory=lambda: datetime.utcnow().timestamp())
     token_count: int = Field(default=0, ge=0)
@@ -227,16 +198,16 @@ class ChatStreamRequest(BaseModel):
 # Event type helpers for type-safe event creation
 
 def create_stage_event(
-    stage: Literal["routing", "retrieval", "reranking", "generation"],
+    stage: Literal["routing", "retrieval", "reranking"],
     status: Literal["started", "complete"],
     metadata: Optional[dict] = None
 ) -> StreamEvent:
     """Create a stage transition event.
 
     Args:
-        stage: Processing stage name (routing, retrieval, reranking, generation)
+        stage: Processing stage name
         status: Stage status (started or complete)
-        metadata: Optional additional data (e.g., doc_count, candidates, agent)
+        metadata: Optional additional data (e.g., doc_count, candidates)
 
     Returns:
         StreamEvent with appropriate type and content
@@ -245,13 +216,8 @@ def create_stage_event(
         >>> event = create_stage_event("retrieval", "started")
         >>> event.type
         'retrieval_start'
-        >>> event = create_stage_event("generation", "started")
-        >>> event.type
-        'generation_start'
     """
-    # Map "started" -> "start", keep "complete" as is
-    status_suffix = "start" if status == "started" else status
-    event_type = f"{stage}_{status_suffix}"
+    event_type = f"{stage}_{status}"
     content = {"stage": stage, "status": status}
     if metadata:
         content.update(metadata)
@@ -303,26 +269,3 @@ def create_cancelled_event() -> StreamEvent:
         StreamEvent with type="cancelled"
     """
     return StreamEvent(type="cancelled", content={})
-
-
-def create_metadata_event(session_id: str) -> StreamEvent:
-    """Create a metadata event with session information.
-
-    Emitted at the start of streaming to provide session_id to frontend.
-    This allows the frontend to persist the session_id for subsequent requests,
-    enabling conversation continuity across multiple streaming messages.
-
-    Args:
-        session_id: Session identifier (UUID) for the conversation
-
-    Returns:
-        StreamEvent with type="metadata" and session_id in content
-
-    Example:
-        >>> event = create_metadata_event("abc-123-def")
-        >>> event.type
-        'metadata'
-        >>> event.content
-        {'session_id': 'abc-123-def'}
-    """
-    return StreamEvent(type="metadata", content={"session_id": session_id})

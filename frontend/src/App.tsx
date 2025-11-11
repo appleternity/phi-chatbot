@@ -13,6 +13,12 @@ function App() {
   const [userId, setCurrentUserId] = useState<string>('')
   const [sessionId, setCurrentSessionId] = useState<string | null>(null)
 
+  // Streaming toggle state (default: disabled as per plan)
+  const [streamingEnabled, setStreamingEnabled] = useState(() => {
+    const saved = localStorage.getItem('streaming_enabled')
+    return saved === 'true' // Default false if not set
+  })
+
   useEffect(() => {
     // Get or create user ID on mount
     let uid = getUserId()
@@ -35,11 +41,29 @@ function App() {
     window.location.reload()
   }
 
+  const handleStreamingToggle = (enabled: boolean) => {
+    setStreamingEnabled(enabled)
+  }
+
+  const handleSessionUpdate = (newSessionId: string) => {
+    setCurrentSessionId(newSessionId)
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-500 to-secondary-500">
       <div className="container mx-auto px-4 py-6 h-screen flex flex-col">
-        <Header sessionId={sessionId || 'New Session'} onNewSession={handleNewSession} />
-        <ChatContainer userId={userId} sessionId={sessionId} />
+        <Header
+          sessionId={sessionId || 'New Session'}
+          onNewSession={handleNewSession}
+          streamingEnabled={streamingEnabled}
+          onStreamingToggle={handleStreamingToggle}
+        />
+        <ChatContainer
+          userId={userId}
+          sessionId={sessionId}
+          streamingEnabled={streamingEnabled}
+          onSessionUpdate={handleSessionUpdate}
+        />
       </div>
     </div>
   )

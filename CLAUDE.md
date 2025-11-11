@@ -5,6 +5,8 @@ Auto-generated from all feature plans. Last updated: 2025-10-29
 ## Active Technologies
 - Python 3.11+ + transformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI (002-semantic-search)
 - PostgreSQL 15+ with pgvector extension (002-semantic-search)
+- Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming (003-sse-streaming)
+- PostgreSQL 15+ with pgvector (existing - no changes needed) (003-sse-streaming)
 
 - Python 3.11+ (001-llm-contextual-chunking)
 - OpenRouter API for LLM calls
@@ -352,6 +354,7 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 - Comprehensive docstrings for all public methods
 
 ## Recent Changes
+- 003-sse-streaming: Added Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming
 - 002-semantic-search: Added Python 3.11+ + ransformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI
 
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
@@ -398,7 +401,6 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
   - Check each chunk file → skip that chunk if valid (granular skip logic)
   - `--redo` flag forces reprocessing regardless of existing files
 
-- **Benefits**:
   - **Simplicity**: ~200 lines of cache code removed
   - **Transparency**: Output files are the source of truth (no hidden cache layer)
   - **Disk Space**: No duplicate storage (cache + output)
