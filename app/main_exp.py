@@ -33,7 +33,7 @@ DEFAULT_MODEL = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
 # --- JWT Settings ---
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "supersecretkey123")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 5 #60 * 2  # 2 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 120))
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
