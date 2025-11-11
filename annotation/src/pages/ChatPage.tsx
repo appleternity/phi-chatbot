@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { BotProfile, ChatMessage } from '../types/chat';
 import ChatWindow from '../components/ChatWindow';
 import BotSelector from '../components/BotSelector';
-import { fetchBotResponse, sendFeedback, getChatHistory } from '../services/chatService';
+import { fetchBotResponse, fetchBotStreamResponse, sendFeedback, getChatHistory } from '../services/chatService';
 import { getToken, logout } from "../services/authService";
 
 
@@ -76,20 +76,49 @@ export default function ChatPage() {
     }));
 
     setIsBotLoading(true);
-    const { text: botReply, message_id } = await fetchBotResponse(text, activeBot.id);
-    const newBotMessage: ChatMessage = {
-      id: message_id,
-      sender: 'bot',
-      text: botReply,
-      rating: null,
-      comment: null,
-    };
+    // const controllerRef = { current: undefined as AbortController | undefined };
 
-    setChatHistories(prev => ({
-      ...prev,
-      [activeBotId]: [...prev[activeBotId], newBotMessage],
-    }));
-    setIsBotLoading(false);
+    // cancel previous ongoing stream (if any)
+    // if (controllerRef.current) controllerRef.current.abort();
+
+    const newControllerRef = { current: undefined as AbortController | undefined };
+    // controllerRef.current = newControllerRef.current;
+    let isFirstChunk = true;
+
+    try {
+      await fetchBotStreamResponse(
+        text,
+        activeBot.id,
+        async (chunk, messageId) => {
+          const trimmed = chunk.trim();
+          if (!trimmed) return;
+
+          if (!isFirstChunk) {
+            await new Promise(res => setTimeout(res, 1500));
+          } else {
+            isFirstChunk = false;
+          }
+
+          const newBubble: ChatMessage = {
+            id: messageId,
+            sender: 'bot',
+            text: trimmed,
+            rating: null,
+            comment: null,
+          };
+          setChatHistories(prev => ({
+            ...prev,
+            [activeBotId]: [...prev[activeBotId], newBubble],
+          }));
+        },
+        newControllerRef
+      );
+
+    } catch (err) {
+      console.error("Streaming error:", err);
+    } finally {
+      setIsBotLoading(false);
+    }
   };
 
   const handleRateMessage = (id: string, rating: 'up' | 'down') => {

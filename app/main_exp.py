@@ -1,22 +1,21 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from dotenv import load_dotenv
-from uuid import uuid4
-from sqlalchemy import create_engine, Column, String, Text, DateTime, ForeignKey
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship
-from datetime import datetime
-from uuid import uuid4
-import hashlib
-
-from datetime import datetime
-import httpx
 import os
-
+import json
+import httpx
+import asyncio
+import hashlib
+from uuid import uuid4
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
+
+from dotenv import load_dotenv
+from fastapi import FastAPI
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, String, Text, DateTime, ForeignKey
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 from app.prompts import BOT_PROMPTS
 
@@ -161,6 +160,43 @@ def read_root():
     return {"status": "ok", "message": "Chatbot backend running with PostgreSQL & OpenRouter."}
 
 
+@app.post("/register")
+def register(req: RegisterRequest):
+    session = SessionLocal()
+    existing = session.query(User).filter_by(username=req.username).first()
+    if existing:
+        session.close()
+        raise HTTPException(status_code=400, detail="Username already exists.")
+    
+    new_user = User(username=req.username, password_hash=hash_password(req.password))
+    session.add(new_user)
+    session.commit()
+    session.refresh(new_user)
+    session.close()
+    print(f"User registered: {new_user.username} (ID: {new_user.id})")
+    return {"user_id": new_user.id, "username": new_user.username}
+
+
+@app.post("/login")
+def login(req: LoginRequest):
+    session = SessionLocal()
+    user = session.query(User).filter_by(username=req.username).first()
+    if not user or not verify_password(req.password, user.password_hash):
+        session.close()
+        print("Failed login attempt for username:", req.username)
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    
+    access_token = create_access_token({"sub": user.id})
+    session.close()
+    print(f"User logged in: {user.username} (ID: {user.id})")
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": user.id,
+        "username": user.username,
+    }
+
+
 @app.post("/chat", response_model=BotResponse)
 async def chat_endpoint(user_data: UserMessage, current_user: str = Depends(get_current_user)):
     """Send user's message to OpenRouter and return the model's response."""
@@ -239,45 +275,9 @@ def feedback(req: FeedbackRequest, current_user: str = Depends(get_current_user)
         session.close()
         return {"status": "ok", "message": "Feedback saved."}
     else:
+        print("Message not found for feedback:", req.dict())
         session.close()
         return {"status": "error", "message": "Message not found."}
-
-
-@app.post("/register")
-def register(req: RegisterRequest):
-    session = SessionLocal()
-    existing = session.query(User).filter_by(username=req.username).first()
-    if existing:
-        session.close()
-        raise HTTPException(status_code=400, detail="Username already exists.")
-    
-    new_user = User(username=req.username, password_hash=hash_password(req.password))
-    session.add(new_user)
-    session.commit()
-    session.refresh(new_user)
-    session.close()
-    print(f"Registered new user: {new_user.username} (ID: {new_user.id})")
-    return {"user_id": new_user.id, "username": new_user.username}
-
-
-@app.post("/login")
-def login(req: LoginRequest):
-    session = SessionLocal()
-    user = session.query(User).filter_by(username=req.username).first()
-    if not user or not verify_password(req.password, user.password_hash):
-        session.close()
-        print("Failed login attempt for username:", req.username)
-        raise HTTPException(status_code=401, detail="Invalid username or password.")
-    
-    access_token = create_access_token({"sub": user.id})
-    session.close()
-    print(f"User logged in: {user.username} (ID: {user.id})")
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user_id": user.id,
-        "username": user.username,
-    }
 
 
 @app.get("/history")
@@ -336,3 +336,138 @@ def get_chat_history(user_id: str = Depends(get_current_user)):
         }
         for m in messages
     ]
+
+
+# Maintain cancel events per user (or per chat session)
+cancel_events: dict[str, asyncio.Event] = {}
+
+@app.post("/chat/stream")
+async def chat_stream(user_data: UserMessage, current_user: str = Depends(get_current_user)):
+    """Stream response from OpenRouter and handle user interruption."""
+    user_id = current_user
+    if user_data:
+        print(f"[User {user_id}] to [{user_data.bot_id}]: {user_data.message}")
+
+    # If there’s an ongoing stream for this user, cancel it
+    if user_id in cancel_events:
+        cancel_events[user_id].set()
+
+    # Create a new cancel event for this session
+    cancel_event = asyncio.Event()
+    cancel_events[user_id] = cancel_event
+
+    # Store user's message in DB
+    session = SessionLocal()
+    user_message = Message(
+        id=str(uuid4()), user_id=user_id,
+        bot_id=user_data.bot_id, sender="user", text=user_data.message,
+    )
+    session.add(user_message)
+    session.commit()
+
+    # Prepare request
+    if not OPENROUTER_API_KEY:
+        return BotResponse(response="Error: Missing OpenRouter API key.", message_id=str(uuid4()))
+
+    system_prompt = BOT_PROMPTS[user_data.bot_id]
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_data.message},
+        ],
+        "stream": True,
+    }
+
+    ENDINGS = ["。", "！", "？", ".", "!", "?", "…", "～", "\n\n", "\n"]
+
+    async def event_generator():
+        buffer = ""
+        sentence_buffer = ""
+        print(f"Streaming start for user={user_id}")
+
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("POST", OPENROUTER_URL, headers=headers, json=payload) as response:
+                    async for chunk in response.aiter_text():
+                        if cancel_event.is_set():
+                            print(f"Stream cancelled for user {user_id}")
+                            break
+
+                        buffer += chunk
+                        while True:
+                            line_end = buffer.find("\n")
+                            if line_end == -1:
+                                break
+                            line = buffer[:line_end].strip()
+                            buffer = buffer[line_end + 1:]
+
+                            if not line or not line.startswith("data: "):
+                                continue
+
+                            data = line[6:]
+                            if data == "[DONE]":
+                                # flush any remaining sentence
+                                trimmed = sentence_buffer.strip()
+                                if trimmed:
+                                    msg_id = _save_message(trimmed, user_id, user_data.bot_id)
+                                    print(f"Streaming output: {trimmed}")
+                                    yield json.dumps({"response": trimmed, "message_id": msg_id}) + "\n"
+                                raise StopAsyncIteration
+
+                            try:
+                                data_obj = json.loads(data)
+                                delta = data_obj["choices"][0]["delta"]
+                                content = delta.get("content", "")
+                                if content:
+                                    sentence_buffer += content
+                                    split_indices = []
+                                    for end in ENDINGS:
+                                        idx = sentence_buffer.find(end)
+                                        while idx != -1:
+                                            split_indices.append(idx + len(end))
+                                            idx = sentence_buffer.find(end, idx + len(end))
+
+                                    # flush up to the earliest boundary
+                                    if split_indices:
+                                        split_pos = min(split_indices)
+                                        sentence = sentence_buffer[:split_pos].strip()
+                                        if sentence:
+                                            msg_id = _save_message(sentence, user_id, user_data.bot_id)
+                                            print(f"Streaming output: {sentence}")
+                                            yield json.dumps({"response": sentence, "message_id": msg_id}) + "\n"
+                                        sentence_buffer = sentence_buffer[split_pos:].lstrip()
+
+                            except json.JSONDecodeError:
+                                continue
+
+        except StopAsyncIteration:
+            pass
+        except Exception as e:
+            print("Streaming error:", e)
+        finally:
+            cancel_events.pop(user_id, None)
+            yield "[STREAM_END]\n"
+            print(f"Stream closed for user={user_id}")
+
+    def _save_message(text: str, user_id: str, bot_id: str):
+        """Helper: store one sentence bubble in DB."""
+        db_session = SessionLocal()
+        msg_id = str(uuid4())
+        bot_msg = Message(
+            id=msg_id,
+            user_id=user_id,
+            bot_id=bot_id,
+            sender="bot",
+            text=text,
+        )
+        db_session.add(bot_msg)
+        db_session.commit()
+        db_session.close()
+        return msg_id
+
+    return StreamingResponse(event_generator(), media_type="text/plain")
