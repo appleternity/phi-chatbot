@@ -24,16 +24,31 @@ function isTokenValid(token: string | null): boolean {
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = getToken();
-    if (isTokenValid(token)) {
-      setIsAuthenticated(true);
-    } else {
-      logout();
-      setIsAuthenticated(false);
-    }
+    const checkAuth = () => {
+      const token = getToken();
+      if (isTokenValid(token)) {
+        setIsAuthenticated(true);
+      } else {
+        logout();
+        setIsAuthenticated(false);
+      }
+      setIsLoading(false);
+    };
+
+    checkAuth();
+
+    // Listen for storage changes (when login happens in another tab or same tab)
+    window.addEventListener("storage", checkAuth);
+    
+    return () => window.removeEventListener("storage", checkAuth);
   }, []);
+
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
 
   return (
     <BrowserRouter>
@@ -41,11 +56,14 @@ export default function App() {
         {/* Default route: redirect based on auth state */}
         <Route
           path="/"
-          element={<Navigate to={isAuthenticated ? "/chat" : "/login"} />}
+          element={<Navigate to={isAuthenticated ? "/chat" : "/login"} replace />}
         />
 
         {/* Public route: Login */}
-        <Route path="/login" element={<LoginPage />} />
+        <Route 
+          path="/login" 
+          element={isAuthenticated ? <Navigate to="/chat" replace /> : <LoginPage onLoginSuccess={() => setIsAuthenticated(true)} />} 
+        />
 
         {/* Protected route: Chat */}
         <Route
@@ -56,7 +74,7 @@ export default function App() {
         />
 
         {/* Catch-all fallback */}
-        <Route path="*" element={<Navigate to="/" />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

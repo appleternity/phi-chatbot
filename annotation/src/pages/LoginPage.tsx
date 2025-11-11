@@ -2,7 +2,11 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { login, register } from "../services/authService";
 
-export default function LoginPage() {
+interface LoginPageProps {
+  onLoginSuccess?: () => void;
+}
+
+export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
@@ -18,9 +22,16 @@ export default function LoginPage() {
         : await login(username, password);
       localStorage.setItem("user_id", user.user_id);
       localStorage.setItem("username", user.username);
+
+      // Notify parent component
+      onLoginSuccess?.();
+
+      // Navigate to chat
       navigate("/chat");
     } catch (err) {
-      setError((err as Error).message);
+      const errorMessage = (err as Error).message;
+      setError(errorMessage);
+      console.error(errorMessage);
     }
   };
 
