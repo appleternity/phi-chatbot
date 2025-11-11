@@ -383,7 +383,7 @@ async def chat_stream(user_data: UserMessage, current_user: str = Depends(get_cu
         "stream": True,
     }
 
-    ENDINGS = ["。", "！", "？", ".", "!", "?", "…", "～", "\n\n", "\n"]
+    ENDINGS = ["|", "\n\n", "\n"] #["。", "！", "？", ".", "!", "?", "…", "～", "\n\n", "\n"]
 
     async def event_generator():
         buffer = ""
@@ -436,7 +436,7 @@ async def chat_stream(user_data: UserMessage, current_user: str = Depends(get_cu
                                     if split_indices:
                                         split_pos = min(split_indices)
                                         sentence = sentence_buffer[:split_pos].strip()
-                                        if sentence:
+                                        if sentence and sentence not in ENDINGS:
                                             msg_id = _save_message(sentence, user_id, user_data.bot_id)
                                             print(f"Streaming output: {sentence}")
                                             yield json.dumps({"response": sentence, "message_id": msg_id}) + "\n"
