@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { BotProfile, ChatMessage } from '../types/chat';
 import ChatWindow from '../components/ChatWindow';
 import BotSelector from '../components/BotSelector';
 import { fetchBotResponse, sendFeedback, getChatHistory } from '../services/chatService';
-import { getToken } from "../services/authService";
+import { getToken, logout } from "../services/authService";
 
 
 const BOTS: BotProfile[] = [
@@ -11,7 +12,7 @@ const BOTS: BotProfile[] = [
     welcomeMessage: '您好，我是欣宁 🙂' },
   { id: 'bot_2', name: '小安', avatarColor: 'bg-green-500', description: '温暖陪伴版', 
     welcomeMessage: '你好呀～我是小安😊'},
-  { id: 'bot_3', name: '亲子心桥', avatarColor: 'bg-indigo-500', description: "科学育儿，用“心”沟通，帮您和孩子走得更近。", 
+  { id: 'bot_3', name: '亲子心桥', avatarColor: 'bg-indigo-500', description: '科学育儿，用"心"沟通，帮您和孩子走得更近。', 
     welcomeMessage: '您好，很高兴能和您聊聊。' },
 ];
 
@@ -34,6 +35,7 @@ export default function ChatPage() {
   const [chatHistories, setChatHistories] = useState(createInitialHistories());
   const [isBotLoading, setIsBotLoading] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
   const token = getToken();
@@ -125,10 +127,27 @@ export default function ChatPage() {
     });
   };
 
+  const handleLogout = () => {
+    logout();
+    // Dispatch storage event to trigger App.tsx's auth check
+    window.dispatchEvent(new Event('storage'));
+    navigate("/login");
+  };
+
   return (
     <div className="flex h-screen text-gray-800">
-      <div className={`${isChatOpen ? 'hidden' : 'flex w-full'} md:flex md:w-80`}>
-        <BotSelector bots={BOTS} activeBotId={activeBotId} onSelectBot={(id) => { setActiveBotId(id); setIsChatOpen(true); }} />
+      <div className={`${isChatOpen ? 'hidden' : 'flex w-full'} md:flex md:w-80 flex-col`}>
+        <div className="flex-1 overflow-auto">
+          <BotSelector bots={BOTS} activeBotId={activeBotId} onSelectBot={(id) => { setActiveBotId(id); setIsChatOpen(true); }} />
+        </div>
+        <div className="border-t p-4">
+          <button
+            onClick={handleLogout}
+            className="w-full bg-red-600 text-white py-2 rounded-md hover:bg-red-700 transition"
+          >
+            Logout
+          </button>
+        </div>
       </div>
 
       <div className={`${!isChatOpen ? 'hidden' : 'flex'} flex-1 flex-col md:flex`}>
