@@ -1,6 +1,10 @@
 """
 Qwen3-Embedding-0.6B encoder with Apple MPS support.
 
+⚠️ DEPRECATED: This module has been moved to app/embeddings/local_encoder.py
+                Please update your imports to use:
+                  from app.embeddings.local_encoder import LocalEmbeddingProvider
+
 This module provides the Qwen3EmbeddingEncoder class for generating 1024-dimensional
 embeddings using the Qwen3-Embedding-0.6B model with MPS (Metal Performance Shaders)
 acceleration on Apple Silicon.
@@ -12,7 +16,7 @@ Key Features:
 - Optional L2 normalization
 - torch.float32 for MPS compatibility (float16 not supported on MPS)
 
-Usage:
+Usage (DEPRECATED - use LocalEmbeddingProvider instead):
     from src.embeddings.encoder import Qwen3EmbeddingEncoder
 
     encoder = Qwen3EmbeddingEncoder(
@@ -30,6 +34,19 @@ Usage:
         "What are the side effects of aripiprazole?",
         "How does aripiprazole work?"
     ])
+
+New Usage (RECOMMENDED):
+    from app.embeddings.local_encoder import LocalEmbeddingProvider
+
+    provider = LocalEmbeddingProvider(
+        model_name="Qwen/Qwen3-Embedding-0.6B",
+        device="mps",
+        batch_size=16,
+        normalize_embeddings=True
+    )
+
+    # Same API as before
+    embedding = provider.encode("What are the side effects of aripiprazole?")
 """
 
 import logging
@@ -43,7 +60,8 @@ from transformers import AutoModel, AutoTokenizer
 # Configure logging
 logger = logging.getLogger(__name__)
 
-
+# TODO: We don't need backward compatibility as we are in dev mode. Not yet launch.
+# If we need to remove it, let's remove it completely.
 class Qwen3EmbeddingEncoder:
     """
     Qwen3-Embedding-0.6B encoder with MPS support for Apple Silicon.
