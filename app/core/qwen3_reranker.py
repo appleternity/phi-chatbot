@@ -35,8 +35,8 @@ class Qwen3Reranker:
     - Causal language model (AutoModelForCausalLM)
     - Input: formatted (query, document) pairs with instruction template
     - Output: yes/no token logits → relevance scores (0.0-1.0)
-    - Device: MPS (Apple Silicon) or CPU fallback
-    - Precision: torch.float32 for MPS compatibility
+    - Device: MPS (Apple Silicon), CUDA, or CPU fallback
+    - Precision: torch.float16 for MPS/CUDA (50% memory reduction), torch.float32 for CPU
 
     Performance Targets:
     - <2s processing time for 20 candidates
@@ -132,7 +132,7 @@ class Qwen3Reranker:
         Lazy load model and tokenizer on first use.
 
         Loads:
-        - AutoModelForCausalLM with torch.float32 for MPS compatibility
+        - AutoModelForCausalLM with torch.float16 (MPS/CUDA) or torch.float32 (CPU)
         - AutoTokenizer with left padding
         - Yes/no token IDs for relevance scoring
         - Prefix/suffix tokens for prompt template
@@ -152,13 +152,19 @@ class Qwen3Reranker:
         )
         logger.info("Tokenizer loaded successfully")
 
-        # Load model with torch.float16 for MPS memory efficiency
-        # Recent PyTorch (2.0+) has improved MPS fp16 support
+        # Use fp16 for GPU acceleration (MPS/CUDA), fp32 for CPU compatibility
+        # CPU kernels don't support fp16 inference (e.g., addmm_impl_cpu_ not implemented for 'Half')
+        torch_dtype = torch.float16 if self.device in ("mps", "cuda") else torch.float32
+
         self._model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
-            torch_dtype=torch.float16  # fp16 reduces memory usage by 50%
+            torch_dtype=torch_dtype
         ).to(self.device).eval()
-        logger.info(f"Model loaded successfully on device: {self.device} (dtype: torch.float16)")
+
+        logger.info(
+            f"Model loaded successfully on device: {self.device} "
+            f"(dtype: {torch_dtype}, memory: {'50% reduced' if torch_dtype == torch.float16 else 'full'})"
+        )
 
         # Extract token IDs for yes/no scoring
         self._token_yes_id = self._tokenizer.convert_tokens_to_ids("yes")
