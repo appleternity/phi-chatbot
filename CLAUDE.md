@@ -7,6 +7,10 @@ Auto-generated from all feature plans. Last updated: 2025-10-29
 - PostgreSQL 15+ with pgvector extension (002-semantic-search)
 - Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming (003-sse-streaming)
 - PostgreSQL 15+ with pgvector (existing - no changes needed) (003-sse-streaming)
+- Python 3.11+ + FastAPI 0.115+, Python secrets module (stdlib) (001-api-bearer-auth)
+- N/A (stateless validation, no database needed) (001-api-bearer-auth)
+- Python 3.11+ + FastAPI 0.115+, Python `secrets` module (stdlib), `hmac` module (stdlib for constant-time comparison) (001-api-bearer-auth)
+- N/A (stateless validation, no database required) (001-api-bearer-auth)
 
 - Python 3.11+ (001-llm-contextual-chunking)
 - OpenRouter API for LLM calls
@@ -49,6 +53,91 @@ tests/
     integration/            # Integration tests
     contract/               # Contract tests
 ```
+
+## Authentication Setup (001-api-bearer-auth)
+
+### Quick Start
+
+**1. Generate API Token**:
+```bash
+# Generate 64-character hex token (256-bit entropy)
+openssl rand -hex 32
+```
+
+**2. Configure Environment Variable**:
+```bash
+# Add to .env file
+echo 'API_BEARER_TOKEN="your-generated-token-here"' >> .env
+```
+
+**3. Start Service**:
+```bash
+# Service will validate token at startup
+python -m app.main
+```
+
+**Expected Startup Log**:
+```
+INFO:     Validating API Bearer Token configuration...
+INFO:     ✅ API Bearer Token validated (64 characters)
+```
+
+### Making Authenticated Requests
+
+**With Valid Token** (succeeds):
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Authorization: Bearer your-generated-token-here" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test", "message": "Hello"}'
+```
+
+**Without Token** (fails with 401):
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test", "message": "Hello"}'
+# Returns: {"detail": "Missing Authorization header", "error_code": "MISSING_TOKEN"}
+```
+
+### Token Requirements
+
+- **Format**: Hexadecimal characters only (0-9, a-f, A-F)
+- **Length**: Minimum 64 characters (enforced by Pydantic validator)
+- **Entropy**: 256-bit minimum for security
+- **Storage**: Use .env file (already in .gitignore)
+
+### Token Rotation
+
+```bash
+# 1. Generate new token
+openssl rand -hex 32
+
+# 2. Update .env
+export API_BEARER_TOKEN="new-token-here"
+
+# 3. Restart service (old token invalidated immediately)
+python -m app.main
+```
+
+### Troubleshooting
+
+**"Field required" error**:
+```bash
+# Verify token is set
+echo $API_BEARER_TOKEN
+
+# If empty, set it
+export API_BEARER_TOKEN=$(openssl rand -hex 32)
+```
+
+**"Must be at least 64 hexadecimal characters"**:
+```bash
+# Regenerate with correct length
+export API_BEARER_TOKEN=$(openssl rand -hex 32)  # 32 bytes = 64 hex chars
+```
+
+For detailed setup guide, see: `specs/001-api-bearer-auth/quickstart.md`
 
 ## Commands
 
@@ -354,41 +443,36 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 - Comprehensive docstrings for all public methods
 
 ## Recent Changes
+- 001-api-bearer-auth: Added Python 3.11+ + FastAPI 0.115+, Python `secrets` module (stdlib), `hmac` module (stdlib for constant-time comparison)
+- 001-api-bearer-auth: Added Python 3.11+ + FastAPI 0.115+, Python secrets module (stdlib)
 - 003-sse-streaming: Added Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming
-- 002-semantic-search: Added Python 3.11+ + ransformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI
 
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
 
 **Enhanced retriever interface to accept conversation history for context-aware retrieval**:
 
-- **Key Change**: Retrievers now accept either `str` or `List[BaseMessage]` as query input
   - Backward compatible: existing string queries still work
   - Context-aware: pass full conversation history for better retrieval
   - Strategy-specific: each retriever decides how much history to use
 
-- **Retriever Strategy History Usage**:
   - **SimpleRetriever**: Last message only (`max_history=1`) - fast, simple
   - **RerankRetriever**: Last message only (`max_history=1`) - reranker provides semantic richness
   - **AdvancedRetriever**: Last 5 messages (`max_history=5`) - rich context for LLM query expansion
 
-- **Implementation Details**:
   - `app/retrieval/utils.py`: New utility module with `extract_query_from_messages()` and `format_message_context()`
   - `app/retrieval/base.py`: Updated `RetrieverProtocol` signature to `Union[str, List[BaseMessage]]`
   - `app/retrieval/simple.py`, `rerank.py`, `advanced.py`: Updated to use message extraction utilities
   - `app/agents/rag_agent.py`: Now passes `state["messages"]` to retriever instead of just query string
 
-- **Benefits**:
   - **Context Resolution**: Handles follow-up questions like "What about children?" with implicit context
   - **Separation of Concerns**: Retrievers encapsulate their own history needs (no longer RAG agent's responsibility)
   - **Enhanced Query Expansion**: AdvancedRetriever uses conversation context for better LLM query variations
   - **Zero Performance Impact**: Simple/Rerank strategies unchanged, Advanced adds ~100-200ms for richer context
 
-- **Testing**:
   - `tests/unit/test_retrieval_utils.py`: Comprehensive tests for utility functions
   - Verified backward compatibility with string inputs
   - Tested multi-turn conversations with context extraction
 
-- **Files Modified**:
   - Created: `app/retrieval/utils.py`, `tests/unit/test_retrieval_utils.py`
   - Updated: `app/retrieval/base.py`, `simple.py`, `rerank.py`, `advanced.py`, `app/agents/rag_agent.py`
 
@@ -396,7 +480,6 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 
 **Removed content-hash caching system and implemented simpler output-file-based skip logic**:
 
-- **Key Change**: Replaced cache_store module with output file checking
   - Check if structure.json exists → skip Phase 1 if valid
   - Check each chunk file → skip that chunk if valid (granular skip logic)
   - `--redo` flag forces reprocessing regardless of existing files
