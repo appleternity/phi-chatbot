@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage
 
 from app.db.connection import DatabasePool
 from app.retrieval.utils import extract_retrieval_query
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from app.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +25,13 @@ class SimpleRetriever:
 
     Attributes:
         pool: Database connection pool
-        encoder: Embedding encoder (Qwen3-Embedding-0.6B)
+        encoder: Embedding provider (local/cloud)
     """
 
     def __init__(
         self,
         pool: DatabasePool,
-        encoder: Qwen3EmbeddingEncoder,
+        encoder: EmbeddingProvider,
     ):
         """Initialize simple retriever.
 

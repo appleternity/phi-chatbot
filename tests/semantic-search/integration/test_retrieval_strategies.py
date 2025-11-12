@@ -15,7 +15,7 @@ sys.path.insert(0, ".")
 from app.config import settings
 from app.db.connection import get_pool, close_pool
 from app.retrieval import get_retriever
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from app.embeddings.local_encoder import LocalEmbeddingProvider
 from app.core.qwen3_reranker import Qwen3Reranker
 
 
@@ -36,7 +36,7 @@ async def test_strategy(strategy_name: str):
 
         # 2. Initialize encoder
         print(f"✓ Creating encoder ({settings.EMBEDDING_MODEL})...")
-        encoder = Qwen3EmbeddingEncoder(
+        encoder = LocalEmbeddingProvider(
             model_name=settings.EMBEDDING_MODEL,
             device="mps",
             batch_size=16,

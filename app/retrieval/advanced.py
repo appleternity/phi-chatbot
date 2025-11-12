@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage
 
 from app.db.connection import DatabasePool
 from app.retrieval.utils import extract_retrieval_query, format_conversation_context
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from app.embeddings import EmbeddingProvider
 from app.core.qwen3_reranker import Qwen3Reranker
 from app.agents.base import create_llm
 
@@ -29,7 +29,7 @@ class AdvancedRetriever:
 
     Attributes:
         pool: Database connection pool
-        encoder: Embedding encoder
+        encoder: Embedding provider (local/cloud)
         reranker: Qwen3-Reranker for scoring
         llm: LLM for query expansion
     """
@@ -37,7 +37,7 @@ class AdvancedRetriever:
     def __init__(
         self,
         pool: DatabasePool,
-        encoder: Qwen3EmbeddingEncoder,
+        encoder: EmbeddingProvider,
         reranker: Qwen3Reranker,
     ):
         """Initialize advanced retriever.

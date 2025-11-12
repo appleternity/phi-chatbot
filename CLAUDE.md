@@ -3,16 +3,12 @@
 Auto-generated from all feature plans. Last updated: 2025-10-29
 
 ## Active Technologies
-- Python 3.11+ + transformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI (002-semantic-search)
-- PostgreSQL 15+ with pgvector extension (002-semantic-search)
-- Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming (003-sse-streaming)
-- PostgreSQL 15+ with pgvector (existing - no changes needed) (003-sse-streaming)
-
-- Python 3.11+ (001-llm-contextual-chunking)
-- OpenRouter API for LLM calls
-- Pydantic 2.x for data validation
-- Tiktoken for token counting
-- Typer for CLI
+- **Python 3.11+** with FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+
+- **Embeddings**: Multi-provider support (local Qwen3, OpenRouter API, Aliyun DashScope) via OpenAI Python client
+- **Database**: PostgreSQL 15+ with pgvector extension for vector similarity search
+- **ML Models**: transformers, torch (MPS support), sentence-transformers for local embedding generation
+- **Streaming**: httpx 0.27+ for async SSE streaming
+- **LLM Chunking**: OpenRouter API, Pydantic 2.x, Tiktoken, Typer CLI
 
 ## Project Structure
 
@@ -29,16 +25,19 @@ src/
     metadata_validator.py   # Validation utilities
     text_aligner.py         # Coverage validation
 
-  embeddings/               # Semantic search indexing (002-semantic-search)
-    models.py               # ChunkMetadata, VectorDocument
-    encoder.py              # Qwen3EmbeddingEncoder (MPS support)
-    indexer.py              # Batch indexing pipeline
-    cli.py                  # CLI commands: index, validate, version
-
 app/
+  embeddings/               # Cloud embedding refactor (004-cloud-embedding-refactor)
+    base.py                 # EmbeddingProvider protocol interface
+    factory.py              # Multi-provider factory (local/openrouter/aliyun)
+    local_encoder.py        # LocalEmbeddingProvider (Qwen3-Embedding-0.6B on MPS/CUDA/CPU)
+    openrouter_provider.py  # OpenRouterEmbeddingProvider (Qwen3-Embedding-0.6B API)
+    aliyun_provider.py      # AliyunEmbeddingProvider (text-embedding-v4 API)
+    utils.py                # Retry logic, error handling utilities
+
   core/
     postgres_retriever.py   # PostgreSQL + pgvector retriever
     qwen3_reranker.py       # Qwen3-Reranker-0.6B for reranking
+
   db/
     schema.py               # Database schema and migrations
     connection.py           # Connection pooling with asyncpg
@@ -354,41 +353,79 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 - Comprehensive docstrings for all public methods
 
 ## Recent Changes
-- 003-sse-streaming: Added Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming
-- 002-semantic-search: Added Python 3.11+ + ransformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI
+
+### Cloud Embedding Refactor - Multi-Provider Architecture (2025-11-12)
+
+**Refactored embedding system from `src/embeddings` to `app/embeddings` with multi-provider support**:
+
+**Architecture**:
+  - **Protocol-based design**: `EmbeddingProvider` protocol defines common interface
+  - **Factory pattern**: `EmbeddingProviderFactory` creates providers based on `EMBEDDING_PROVIDER` environment variable
+  - **Three providers**: Local (Qwen3 on MPS/CUDA/CPU), OpenRouter API, Aliyun DashScope
+  - **Unified interface**: `encode()`, `get_embedding_dimension()`, `get_provider_name()`, `validate_dimension()`
+
+**Providers**:
+  - **LocalEmbeddingProvider**: Qwen3-Embedding-0.6B running on MPS/CUDA/CPU (1024-dim)
+  - **OpenRouterEmbeddingProvider**: OpenRouter API with qwen/qwen3-embedding-0.6b model (1024-dim)
+  - **AliyunEmbeddingProvider**: Aliyun DashScope text-embedding-v4 model (1024-dim dense format)
+
+**Configuration**:
+  - `EMBEDDING_PROVIDER`: "local", "openrouter", or "aliyun"
+  - `OPENAI_API_KEY`: Required for OpenRouter provider
+  - `ALIYUN_API_KEY`: Required for Aliyun provider
+  - No API keys required for local provider
+
+**Benefits**:
+  - **Zero vendor lock-in**: Switch providers via environment variable
+  - **Cost flexibility**: Local (free, hardware-dependent) vs Cloud (pay-per-use, scalable)
+  - **Performance trade-offs**: Local (fast, requires GPU) vs Cloud (consistent, network latency)
+  - **Reliability**: Retry logic with exponential backoff, batch processing, error handling
+
+**Migration**:
+  - Eliminated: `src/embeddings/` module (encoder.py, indexer.py, cli.py, models.py)
+  - Created: `app/embeddings/` module with protocol-based design
+  - Test coverage: 56 passing tests (contract, integration, unit), 66.8% coverage for app.embeddings
+  - Type safety: mypy type checking with minimal errors
+
+**Usage**:
+```python
+from app.embeddings.factory import EmbeddingProviderFactory
+from app.config import settings
+
+# Auto-selects provider based on EMBEDDING_PROVIDER env var
+provider = EmbeddingProviderFactory.create_provider(settings)
+
+# Unified interface across all providers
+embedding = provider.encode("test query")  # Returns (1024,) np.ndarray
+embeddings = provider.encode(["query 1", "query 2"])  # Returns List[np.ndarray]
+```
 
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
 
 **Enhanced retriever interface to accept conversation history for context-aware retrieval**:
 
-- **Key Change**: Retrievers now accept either `str` or `List[BaseMessage]` as query input
   - Backward compatible: existing string queries still work
   - Context-aware: pass full conversation history for better retrieval
   - Strategy-specific: each retriever decides how much history to use
 
-- **Retriever Strategy History Usage**:
   - **SimpleRetriever**: Last message only (`max_history=1`) - fast, simple
   - **RerankRetriever**: Last message only (`max_history=1`) - reranker provides semantic richness
   - **AdvancedRetriever**: Last 5 messages (`max_history=5`) - rich context for LLM query expansion
 
-- **Implementation Details**:
   - `app/retrieval/utils.py`: New utility module with `extract_query_from_messages()` and `format_message_context()`
   - `app/retrieval/base.py`: Updated `RetrieverProtocol` signature to `Union[str, List[BaseMessage]]`
   - `app/retrieval/simple.py`, `rerank.py`, `advanced.py`: Updated to use message extraction utilities
   - `app/agents/rag_agent.py`: Now passes `state["messages"]` to retriever instead of just query string
 
-- **Benefits**:
   - **Context Resolution**: Handles follow-up questions like "What about children?" with implicit context
   - **Separation of Concerns**: Retrievers encapsulate their own history needs (no longer RAG agent's responsibility)
   - **Enhanced Query Expansion**: AdvancedRetriever uses conversation context for better LLM query variations
   - **Zero Performance Impact**: Simple/Rerank strategies unchanged, Advanced adds ~100-200ms for richer context
 
-- **Testing**:
   - `tests/unit/test_retrieval_utils.py`: Comprehensive tests for utility functions
   - Verified backward compatibility with string inputs
   - Tested multi-turn conversations with context extraction
 
-- **Files Modified**:
   - Created: `app/retrieval/utils.py`, `tests/unit/test_retrieval_utils.py`
   - Updated: `app/retrieval/base.py`, `simple.py`, `rerank.py`, `advanced.py`, `app/agents/rag_agent.py`
 
@@ -396,7 +433,6 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 
 **Removed content-hash caching system and implemented simpler output-file-based skip logic**:
 
-- **Key Change**: Replaced cache_store module with output file checking
   - Check if structure.json exists → skip Phase 1 if valid
   - Check each chunk file → skip that chunk if valid (granular skip logic)
   - `--redo` flag forces reprocessing regardless of existing files

@@ -12,7 +12,7 @@ load_dotenv(override=True)
 
 from app.config import settings
 from app.db.connection import get_pool, close_pool
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from app.embeddings.local_encoder import LocalEmbeddingProvider
 from app.core.qwen3_reranker import Qwen3Reranker
 from app.retrieval import get_retriever, SimpleRetriever, RerankRetriever, AdvancedRetriever
 
@@ -27,7 +27,7 @@ async def test_simple_retriever():
     logger.info("=" * 80)
 
     pool = await get_pool()
-    encoder = Qwen3EmbeddingEncoder(
+    encoder = LocalEmbeddingProvider(
         model_name=settings.EMBEDDING_MODEL,
         device="mps",
         batch_size=16
@@ -67,7 +67,7 @@ async def test_rerank_retriever():
     logger.info("=" * 80)
 
     pool = await get_pool()
-    encoder = Qwen3EmbeddingEncoder(
+    encoder = LocalEmbeddingProvider(
         model_name=settings.EMBEDDING_MODEL,
         device="mps",
         batch_size=16
@@ -113,7 +113,7 @@ async def test_advanced_retriever():
     logger.info("=" * 80)
 
     pool = await get_pool()
-    encoder = Qwen3EmbeddingEncoder(
+    encoder = LocalEmbeddingProvider(
         model_name=settings.EMBEDDING_MODEL,
         device="mps",
         batch_size=16
@@ -169,7 +169,7 @@ async def test_factory():
     logger.info("=" * 80)
 
     pool = await get_pool()
-    encoder = Qwen3EmbeddingEncoder(
+    encoder = LocalEmbeddingProvider(
         model_name=settings.EMBEDDING_MODEL,
         device="mps",
         batch_size=16

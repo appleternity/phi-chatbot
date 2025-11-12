@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage
 
 from app.db.connection import DatabasePool
 from app.retrieval.utils import extract_retrieval_query
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from app.embeddings import EmbeddingProvider
 from app.core.qwen3_reranker import Qwen3Reranker
 
 logger = logging.getLogger(__name__)
@@ -27,14 +27,14 @@ class RerankRetriever:
 
     Attributes:
         pool: Database connection pool
-        encoder: Embedding encoder
+        encoder: Embedding provider (local/cloud)
         reranker: Qwen3-Reranker for scoring
     """
 
     def __init__(
         self,
         pool: DatabasePool,
-        encoder: Qwen3EmbeddingEncoder,
+        encoder: EmbeddingProvider,
         reranker: Qwen3Reranker,
     ):
         """Initialize rerank retriever.
