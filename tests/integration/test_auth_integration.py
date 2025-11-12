@@ -9,29 +9,60 @@ Test Coverage:
 - Invalid token → 401 INVALID_TOKEN
 - Malformed header → 401 MALFORMED_HEADER
 - Error response format matches AuthError schema
-
-Note: These tests will fail until the authentication dependency
-is implemented and added to the /chat endpoint (T011-T012).
 """
 
 import pytest
+import os
 from fastapi.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+import numpy as np
 
-from app.main import app
 
-
-@pytest.fixture
+@pytest.fixture(scope="module")
 def test_token():
     """Valid test token for authentication."""
-    # Generate a 64-character hex token (minimum required length)
     return "a" * 64
 
 
-@pytest.fixture
-def client():
-    """FastAPI test client."""
-    return TestClient(app)
+@pytest.fixture(scope="module")
+def mock_encoder():
+    """Mocked encoder for testing."""
+    encoder = MagicMock()
+    # encode() is synchronous and returns a numpy array with shape (1024,)
+    # The retriever code calls .tolist() on the result
+    encoder.encode = MagicMock(return_value=np.array([0.1] * 1024))
+    return encoder
+
+
+@pytest.fixture(scope="module")
+def mock_reranker():
+    """Mocked reranker for testing."""
+    reranker = MagicMock()
+    # rerank() returns List[float], one score per document
+    def mock_rerank(query, documents):
+        return [0.9 - (i * 0.1) for i in range(len(documents))]
+    reranker.rerank = mock_rerank
+    return reranker
+
+
+@pytest.fixture(scope="module")
+def client(test_token, mock_encoder, mock_reranker):
+    """FastAPI test client with properly mocked dependencies."""
+    os.environ["API_BEARER_TOKEN"] = test_token
+    os.environ["TESTING"] = "true"
+
+    # Force reload settings
+    import sys
+    if "app.config" in sys.modules:
+        from importlib import reload
+        import app.config
+        reload(app.config)
+
+    with patch("app.main.Qwen3EmbeddingEncoder", return_value=mock_encoder), \
+         patch("app.main.Qwen3Reranker", return_value=mock_reranker):
+        from app.main import app
+        with TestClient(app) as test_client:
+            yield test_client
 
 
 class TestChatAuthenticationFlow:
@@ -45,28 +76,26 @@ class TestChatAuthenticationFlow:
         - Response: Normal chat response
         - No authentication error
         """
-        # Mock the settings to use test token
-        with patch("app.config.settings.API_BEARER_TOKEN", test_token):
-            # Make request with valid Bearer token
-            response = client.post(
-                "/chat",
-                json={
-                    "user_id": "test_user",
-                    "message": "Hello",
-                    "streaming": False,
-                },
-                headers={"Authorization": f"Bearer {test_token}"},
-            )
+        # Make request with valid Bearer token
+        response = client.post(
+            "/chat",
+            json={
+                "user_id": "test_user",
+                "message": "Hello",
+                "streaming": False,
+            },
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
 
-            # Verify authentication succeeded
-            assert response.status_code == 200
+        # Verify authentication succeeded
+        assert response.status_code == 200
 
-            # Verify response is not an auth error
-            # (it should be a ChatResponse or error, but not auth error)
-            response_data = response.json()
-            assert "error_code" not in response_data or response_data.get(
-                "error_code"
-            ) not in ["MISSING_TOKEN", "INVALID_TOKEN", "MALFORMED_HEADER"]
+        # Verify response is not an auth error
+        # (it should be a ChatResponse or error, but not auth error)
+        response_data = response.json()
+        assert "error_code" not in response_data or response_data.get(
+            "error_code"
+        ) not in ["MISSING_TOKEN", "INVALID_TOKEN", "MALFORMED_HEADER"]
 
     def test_missing_token_returns_401_missing_token(self, client, test_token):
         """Verify request without Authorization header returns 401 MISSING_TOKEN.
@@ -76,29 +105,27 @@ class TestChatAuthenticationFlow:
         - Response body: AuthError with MISSING_TOKEN error code
         - detail: Explains missing Authorization header
         """
-        # Mock the settings to use test token
-        with patch("app.config.settings.API_BEARER_TOKEN", test_token):
-            # Make request without Authorization header
-            response = client.post(
-                "/chat",
-                json={
-                    "user_id": "test_user",
-                    "message": "Hello",
-                    "streaming": False,
-                },
-            )
+        # Make request without Authorization header
+        response = client.post(
+            "/chat",
+            json={
+                "user_id": "test_user",
+                "message": "Hello",
+                "streaming": False,
+            },
+        )
 
-            # Verify authentication failed with correct status
-            assert response.status_code == 401
+        # Verify authentication failed with correct status
+        assert response.status_code == 401
 
-            # Verify error response format
-            error_data = response.json()
-            assert "detail" in error_data
-            assert "error_code" in error_data
-            assert error_data["error_code"] == "MISSING_TOKEN"
+        # Verify error response format
+        error_data = response.json()
+        assert "detail" in error_data
+        assert "error_code" in error_data
+        assert error_data["error_code"] == "MISSING_TOKEN"
 
-            # Verify detail message is meaningful
-            assert len(error_data["detail"]) > 0
+        # Verify detail message is meaningful
+        assert len(error_data["detail"]) > 0
 
     def test_invalid_token_returns_401_invalid_token(self, client, test_token):
         """Verify request with wrong token returns 401 INVALID_TOKEN.
@@ -108,28 +135,26 @@ class TestChatAuthenticationFlow:
         - Response body: AuthError with INVALID_TOKEN error code
         - detail: Explains token validation failed
         """
-        # Mock the settings to use test token
-        with patch("app.config.settings.API_BEARER_TOKEN", test_token):
-            # Make request with WRONG token
-            wrong_token = "b" * 64  # Different token
-            response = client.post(
-                "/chat",
-                json={
-                    "user_id": "test_user",
-                    "message": "Hello",
-                    "streaming": False,
-                },
-                headers={"Authorization": f"Bearer {wrong_token}"},
-            )
+        # Make request with WRONG token
+        wrong_token = "b" * 64  # Different token
+        response = client.post(
+            "/chat",
+            json={
+                "user_id": "test_user",
+                "message": "Hello",
+                "streaming": False,
+            },
+            headers={"Authorization": f"Bearer {wrong_token}"},
+        )
 
-            # Verify authentication failed
-            assert response.status_code == 401
+        # Verify authentication failed
+        assert response.status_code == 401
 
-            # Verify error response format
-            error_data = response.json()
-            assert "detail" in error_data
-            assert "error_code" in error_data
-            assert error_data["error_code"] == "INVALID_TOKEN"
+        # Verify error response format
+        error_data = response.json()
+        assert "detail" in error_data
+        assert "error_code" in error_data
+        assert error_data["error_code"] == "INVALID_TOKEN"
 
     def test_malformed_header_returns_401_malformed_header(self, client, test_token):
         """Verify request with malformed Authorization header returns 401 MALFORMED_HEADER.
@@ -139,27 +164,25 @@ class TestChatAuthenticationFlow:
         - Response body: AuthError with MALFORMED_HEADER error code
         - detail: Explains correct header format
         """
-        # Mock the settings to use test token
-        with patch("app.config.settings.API_BEARER_TOKEN", test_token):
-            # Make request with malformed header (missing "Bearer" prefix)
-            response = client.post(
-                "/chat",
-                json={
-                    "user_id": "test_user",
-                    "message": "Hello",
-                    "streaming": False,
-                },
-                headers={"Authorization": test_token},  # Missing "Bearer " prefix
-            )
+        # Make request with malformed header (missing "Bearer" prefix)
+        response = client.post(
+            "/chat",
+            json={
+                "user_id": "test_user",
+                "message": "Hello",
+                "streaming": False,
+            },
+            headers={"Authorization": test_token},  # Missing "Bearer " prefix
+        )
 
-            # Verify authentication failed
-            assert response.status_code == 401
+        # Verify authentication failed
+        assert response.status_code == 401
 
-            # Verify error response format
-            error_data = response.json()
-            assert "detail" in error_data
-            assert "error_code" in error_data
-            assert error_data["error_code"] == "MALFORMED_HEADER"
+        # Verify error response format
+        error_data = response.json()
+        assert "detail" in error_data
+        assert "error_code" in error_data
+        assert error_data["error_code"] == "MALFORMED_HEADER"
 
     @pytest.mark.parametrize(
         "header_value,expected_error_code",

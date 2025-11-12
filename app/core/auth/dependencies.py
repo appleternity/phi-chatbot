@@ -25,7 +25,7 @@ Performance:
 - Thread-safe (no shared state)
 """
 
-from fastapi import HTTPException, Security
+from fastapi import HTTPException, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 
@@ -35,31 +35,51 @@ from app.core.auth.models import AuthError, ErrorCode
 from app.core.auth.logging import log_auth_success, log_auth_failure
 
 
+class AuthenticationException(HTTPException):
+    """Custom exception for authentication failures.
+
+    This exception is caught by a custom handler in main.py that returns
+    the error in the expected format: {'detail': '...', 'error_code': '...'}
+    instead of HTTPException's nested format.
+    """
+    def __init__(self, error: AuthError):
+        """Initialize with AuthError model.
+
+        Args:
+            error: AuthError containing detail and error_code
+        """
+        self.error = error
+        # Call parent with status_code only (detail will be handled by exception handler)
+        super().__init__(status_code=401)
+
+
 # Initialize HTTPBearer security scheme
 # This extracts the Authorization header and validates the "Bearer" scheme
 security = HTTPBearer(auto_error=False)
 
 
 async def verify_bearer_token(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
 ) -> str:
     """Verify Bearer token and return validated token on success.
 
     This dependency function:
-    1. Extracts Authorization header using HTTPBearer
-    2. Validates header format ("Bearer {token}")
-    3. Compares token with expected value using constant-time comparison
+    1. Manually checks Authorization header for malformed cases
+    2. Uses HTTPBearer for well-formed headers
+    3. Validates token using constant-time comparison
     4. Logs authentication outcome (success/failure)
-    5. Returns validated token on success, raises HTTPException on failure
+    5. Returns validated token on success, raises AuthenticationException on failure
 
     Args:
+        request: FastAPI Request object to access raw headers
         credentials: HTTP Bearer credentials extracted from Authorization header
 
     Returns:
         str: The validated Bearer token (only if authentication succeeds)
 
     Raises:
-        HTTPException: 401 Unauthorized with AuthError body for:
+        AuthenticationException: 401 Unauthorized with AuthError body for:
             - Missing Authorization header (MISSING_TOKEN)
             - Malformed Authorization header (MALFORMED_HEADER)
             - Invalid token (INVALID_TOKEN)
@@ -88,44 +108,56 @@ async def verify_bearer_token(
         >>> # Request fails with malformed header:
         >>> # Authorization: {token} → 401 {error_code: "MALFORMED_HEADER"}
     """
-    # Case 1: Missing Authorization header
-    if credentials is None:
+    # Get raw Authorization header to detect malformed cases
+    # HTTPBearer returns None for both missing AND malformed, so we need to check manually
+    auth_header = request.headers.get("authorization")
+
+    # Case 1: Missing Authorization header (None means header not present)
+    if auth_header is None:
         error = AuthError(
             detail="Missing Authorization header",
             error_code=ErrorCode.MISSING_TOKEN,
         )
 
-        # Log authentication failure
         log_auth_failure(
             error_code=ErrorCode.MISSING_TOKEN,
             detail="No Authorization header provided",
         )
 
-        raise HTTPException(
-            status_code=401,
-            detail=error.model_dump(),
-        )
+        raise AuthenticationException(error=error)
 
-    # Case 2: Malformed header (HTTPBearer validates "Bearer" scheme, but check anyway)
-    if not credentials.credentials:
+    # Case 2: Malformed header - empty string or doesn't start with "Bearer "
+    # Check for proper format before HTTPBearer processes it
+    if not auth_header or not auth_header.startswith("Bearer "):
         error = AuthError(
             detail="Invalid Authorization header format. Expected: Bearer {token}",
             error_code=ErrorCode.MALFORMED_HEADER,
         )
 
-        # Log authentication failure
         log_auth_failure(
             error_code=ErrorCode.MALFORMED_HEADER,
             detail="Authorization header is malformed",
         )
 
-        raise HTTPException(
-            status_code=401,
-            detail=error.model_dump(),
+        raise AuthenticationException(error=error)
+
+    # Case 3: Header is well-formed but HTTPBearer returned None (shouldn't happen, but defensive)
+    if credentials is None:
+        error = AuthError(
+            detail="Invalid Authorization header format. Expected: Bearer {token}",
+            error_code=ErrorCode.MALFORMED_HEADER,
         )
 
-    # Case 3: Validate token using constant-time comparison
-    provided_token = credentials.credentials
+        log_auth_failure(
+            error_code=ErrorCode.MALFORMED_HEADER,
+            detail="Authorization header parsing failed",
+        )
+
+        raise AuthenticationException(error=error)
+
+    # Case 4: Validate token using constant-time comparison
+    # Strip whitespace from provided token (expected token already stripped by settings validator)
+    provided_token = credentials.credentials.strip()
     expected_token = settings.API_BEARER_TOKEN
 
     if not validate_bearer_token(provided_token, expected_token):
@@ -140,10 +172,7 @@ async def verify_bearer_token(
             detail="Token validation failed",
         )
 
-        raise HTTPException(
-            status_code=401,
-            detail=error.model_dump(),
-        )
+        raise AuthenticationException(error=error)
 
     # Success: Log authentication success (do NOT log token values)
     log_auth_success()

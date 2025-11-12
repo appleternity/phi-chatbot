@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from app.models import HealthResponse, ChatRequest, ChatResponse, ChatStreamRequest
 from app.config import settings
 from app.core.session_store import InMemorySessionStore, SessionStore, SessionData
@@ -21,8 +21,8 @@ from typing import Optional
 # Import streaming logic
 from app.api.streaming import stream_chat_events
 
-# Import authentication dependency
-from app.core.auth.dependencies import verify_bearer_token
+# Import authentication dependency and custom exception
+from app.core.auth.dependencies import verify_bearer_token, AuthenticationException
 
 # Configure logging
 logging.basicConfig(
@@ -188,6 +188,25 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Custom exception handler for authentication errors
+# This returns the proper format: {'detail': '...', 'error_code': '...'}
+# instead of HTTPException's nested format: {'detail': {'detail': '...', 'error_code': '...'}}
+@app.exception_handler(AuthenticationException)
+async def authentication_exception_handler(request: Request, exc: AuthenticationException):
+    """Handle AuthenticationException and return flat error structure.
+
+    Args:
+        request: The incoming request
+        exc: The AuthenticationException with error details
+
+    Returns:
+        JSONResponse with 401 status and flat error structure
+    """
+    return JSONResponse(
+        status_code=401,
+        content=exc.error.model_dump(),
+    )
 
 # CORS middleware
 app.add_middleware(
