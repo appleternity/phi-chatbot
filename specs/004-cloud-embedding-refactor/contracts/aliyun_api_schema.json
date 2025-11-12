@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Aliyun text-embedding-v4 API Schema",
+  "description": "API contract for Aliyun DashScope text-embedding-v4 (OpenAI-compatible endpoint)",
+  "request": {
+    "title": "EmbeddingRequest",
+    "type": "object",
+    "required": ["model", "input"],
+    "properties": {
+      "model": {
+        "type": "string",
+        "const": "text-embedding-v4",
+        "description": "Aliyun text-embedding-v4 model"
+      },
+      "input": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Single text to embed"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Batch of texts to embed",
+            "maxItems": 100
+          }
+        ]
+      },
+      "dimensions": {
+        "type": "integer",
+        "const": 1024,
+        "description": "Output dimension (required)"
+      },
+      "encoding_format": {
+        "type": "string",
+        "enum": ["float", "base64"],
+        "default": "float",
+        "description": "Embedding encoding format"
+      }
+    },
+    "example": {
+      "model": "text-embedding-v4",
+      "input": "What are the side effects of aripiprazole?",
+      "dimensions": 1024,
+      "encoding_format": "float"
+    }
+  },
+  "response": {
+    "title": "EmbeddingResponse",
+    "type": "object",
+    "required": ["object", "data", "model", "usage"],
+    "properties": {
+      "object": {
+        "type": "string",
+        "const": "list"
+      },
+      "data": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["object", "index", "embedding"],
+          "properties": {
+            "object": {
+              "type": "string",
+              "const": "embedding"
+            },
+            "index": {
+              "type": "integer"
+            },
+            "embedding": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 1024,
+              "maxItems": 1024,
+              "description": "1024-dimensional embedding"
+            }
+          }
+        }
+      },
+      "model": {
+        "type": "string"
+      },
+      "usage": {
+        "type": "object",
+        "properties": {
+          "prompt_tokens": {
+            "type": "integer"
+          },
+          "total_tokens": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "api_details": {
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "endpoint": "/embeddings",
+    "method": "POST",
+    "authentication": {
+      "type": "bearer",
+      "header": "Authorization: Bearer {aliyun_api_key}",
+      "env_var": "DASHSCOPE_API_KEY"
+    }
+  },
+  "errors": {
+    "title": "ErrorResponse",
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string",
+        "description": "Error code identifier"
+      },
+      "message": {
+        "type": "string",
+        "description": "Human-readable error message"
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Request ID for debugging"
+      }
+    },
+    "examples": {
+      "authentication_error": {
+        "code": "InvalidApiKey",
+        "message": "Invalid API key provided",
+        "request_id": "abc123"
+      },
+      "rate_limit_error": {
+        "code": "Throttling.RateQuota",
+        "message": "Rate limit exceeded",
+        "request_id": "def456"
+      }
+    }
+  }
+}
