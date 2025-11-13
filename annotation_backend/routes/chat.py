@@ -28,7 +28,6 @@ async def chat_endpoint(user_data: UserMessage,
         print(f"[User {user_id}] to [{user_data.bot_id}]: {user_data.message}")
 
     # # Store user's message
-    # session = SessionLocal()
     user_message = Message(
         id=str(uuid4()),
         user_id=user_id,
@@ -38,8 +37,6 @@ async def chat_endpoint(user_data: UserMessage,
     )
     db.add(user_message)
     db.commit()
-    # session.add(user_message)
-    # session.commit()
 
     # Prepare API request
     if not OPENROUTER_API_KEY:
@@ -81,9 +78,6 @@ async def chat_endpoint(user_data: UserMessage,
     )
     db.add(bot_message)
     db.commit()
-    # session.add(bot_message)
-    # session.commit()
-    # session.close()
     return BotResponse(response=reply, message_id=message_id)
 
 
@@ -108,7 +102,6 @@ async def chat_stream(user_data: UserMessage,
     cancel_events[user_id] = cancel_event
 
     # Store user's message in DB
-    # session = SessionLocal()
     user_message = Message(
         id=str(uuid4()), user_id=user_id,
         bot_id=user_data.bot_id, sender="user", text=user_data.message,
@@ -207,7 +200,6 @@ async def chat_stream(user_data: UserMessage,
 
     def _save_message(text: str, user_id: str, bot_id: str, db: Session):
         """Helper: store one sentence bubble in DB."""
-        # db_session = SessionLocal()
         msg_id = str(uuid4())
         bot_msg = Message(
             id=msg_id,
@@ -218,9 +210,6 @@ async def chat_stream(user_data: UserMessage,
         )
         db.add(bot_msg)
         db.commit()
-        # db_session.add(bot_msg)
-        # db_session.commit()
-        # db_session.close()
         return msg_id
 
     return StreamingResponse(event_generator(), media_type="text/plain")
@@ -233,7 +222,6 @@ def feedback(req: FeedbackRequest,
              current_user: str = Depends(get_current_user),
              db: Session = Depends(get_db)):
     """Store feedback for a specific bot message."""
-    # session = SessionLocal()
     user_id = current_user
     message = db.query(Message).filter_by(id=req.message_id).first()
     if message:
