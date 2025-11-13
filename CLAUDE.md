@@ -553,6 +553,31 @@ dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
   - Deleted: `app/tools/medical_search.py`
   - Enhanced: `tests/fakes/fake_chat_model.py` (classification support, word boundaries)
 
+### Simplified Supervisor - Removed Confidence Scores and Reasoning (2025-11-13)
+
+**Simplified supervisor classification by removing unnecessary complexity**:
+
+- **Key Change**: Removed structured output with confidence scores and reasoning
+  - Supervisor now returns plain text agent name instead of Pydantic model
+  - Removed `AgentClassification` model with `reasoning` and `confidence` fields
+  - Added `VALID_AGENTS` set for explicit validation
+  - Kept stream events for frontend integration
+
+- **Benefits**:
+  - **Simpler Implementation**: Easier to debug and maintain
+  - **Faster Classification**: No structured output parsing overhead
+  - **More Robust**: Explicit validation instead of schema enforcement
+  - **Cleaner Logs**: No unnecessary metadata cluttering logs
+
+- **Implementation Details**:
+  - `app/agents/supervisor.py`: Use `llm.invoke()` instead of `llm.with_structured_output()`
+  - `app/utils/prompts.py`: Updated to request plain text output only
+  - Validation logic explicitly checks against `VALID_AGENTS` set
+  - Stream events preserved for routing:started and routing:complete
+
+- **Files Modified**:
+  - Updated: `app/agents/supervisor.py`, `app/utils/prompts.py`
+
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
 
 **Enhanced retriever interface to accept conversation history for context-aware retrieval**:
