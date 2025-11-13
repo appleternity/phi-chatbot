@@ -252,7 +252,6 @@ def get_chat_history(user_id: str = Depends(get_current_user), db: Session = Dep
     """
     Get chat history for a specific user.
     """
-    # session = SessionLocal()
     try:
         messages = (
             db.query(Message)
@@ -263,22 +262,18 @@ def get_chat_history(user_id: str = Depends(get_current_user), db: Session = Dep
     except Exception as e:
         print(f"Error fetching chat history for user {user_id}: {e}\n-----\n")
         messages = []
-    
+
     print(f"Fetched chat history for user: {user_id}, total messages: {len(messages)}")
     if len(messages) == 0:
-        welcome_messages = [
-            {"bot_id": "bot_1", "text": "您好，我是理性小飞 🙂\n我可以陪您一起探讨孩子的情绪、沟通方式，或您在育儿中的压力。\n请放心表达，我会以温和、专业的方式倾听和回应。"},
-            {"bot_id": "bot_2", "text": "你好呀～我是共情小飞😊\n有时候孩子的情绪或沟通真的挺让人头大，对吧？ \n你可以跟我聊聊最近让你最烦心或最担心的事，我会认真听，也许能帮你换个角度看看！"},
-            {"bot_id": "bot_3", "text": "您好，很高兴能和您聊聊。作为家长，关心孩子的情绪和成长真的非常不容易。\n\n您可以把我当作一个安全、不带评判的\"树洞\"，和我聊聊您的困惑和担忧。我也会尽力为您提供一些科学的心理健康科普、实用的沟通技巧和初步的应对建议。\n\n您今天想从哪里开始聊起呢？"},
-        ]
-        
-        for welcome in welcome_messages:
+        with open(settings.BOT_INFO_PATH, "r", encoding="utf-8") as f:
+            bots = json.load(f)
+        for bot in bots:
             welcome_message = Message(
                 id=str(uuid4()),
                 user_id=user_id,
-                bot_id=welcome["bot_id"],
+                bot_id=bot["id"],
                 sender="bot",
-                text=welcome["text"],
+                text=bot["welcome_message"],
             )
             db.add(welcome_message)
             print('Add welcome message:', welcome_message.text)

@@ -5,74 +5,66 @@ import ChatWindow from '../components/ChatWindow';
 import BotSelector from '../components/BotSelector';
 import { fetchBotResponse, fetchBotStreamResponse, sendFeedback, getChatHistory } from '../services/chatService';
 import { getToken, logout } from "../services/authService";
+import { fetchBots, createInitialHistories } from '../services/botService';
 
-
-const BOTS: BotProfile[] = [
-  { id: 'bot_1', name: '理性小飞', avatarColor: 'bg-blue-500', description: '稳重、条理清晰的心理支持顾问', 
-    welcomeMessage: '您好，我是理性小飞 🙂' },
-  { id: 'bot_2', name: '共情小飞', avatarColor: 'bg-green-500', description: '像朋友一样倾听与共情', 
-    welcomeMessage: '你好呀～我是共情小飞😊'},
-  { id: 'bot_3', name: '守护小飞', avatarColor: 'bg-indigo-500', description: '和您一起守护孩子成长', 
-    welcomeMessage: '您好，很高兴能和您聊聊。' },
-];
-
-function createInitialHistories(): Record<string, ChatMessage[]> {
-  const result: Record<string, ChatMessage[]> = {};
-  BOTS.forEach(bot => {
-    result[bot.id] = [{
-      id: crypto.randomUUID(),
-      sender: 'bot',
-      text: bot.welcomeMessage,
-      rating: null,
-      comment: null,
-    }];
-  });
-  return result;
-}
 
 export default function ChatPage() {
-  const [activeBotId, setActiveBotId] = useState(BOTS[0].id);
-  const [chatHistories, setChatHistories] = useState(createInitialHistories());
+  const [bots, setBots] = useState<BotProfile[]>([]);
+  const [activeBotId, setActiveBotId] = useState<string | null>(null);
+  const [chatHistories, setChatHistories] = useState<Record<string, ChatMessage[]>>({});
   const [isBotLoading, setIsBotLoading] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
-  const token = getToken();
-  if (!token) return;
-
-  // Load chat history for this user
-  getChatHistory()
-    .then((messages) => {
-      if (!messages || messages.length === 0) {
-        console.log("No previous history for this user.");
-        return;
+    fetchBots().then((data) => {
+      if (data.bots && data.bots.length > 0) {
+        setBots(data.bots);
+        setActiveBotId(data.bots[0]?.id || null);
+        setChatHistories(createInitialHistories(data.bots));
+      } else {
+        console.error("No bots found.");
       }
-      const historiesByBot: Record<string, ChatMessage[]> = {};
-      messages.forEach((msg: any) => {
-        if (!historiesByBot[msg.bot_id]) historiesByBot[msg.bot_id] = [];
-        historiesByBot[msg.bot_id].push({
-          id: msg.id,
-          sender: msg.sender,
-          text: msg.text,
-          rating: msg.rating,
-          comment: msg.comment,
-        });
-      });
-      setChatHistories((prev) => ({ ...prev, ...historiesByBot }));
-    })
-    .catch((err) => console.error("Failed to load history:", err));
+    }).catch((error) => {
+      console.error("Failed to fetch bots:", error);
+    });
   }, []);
-  
 
-  const activeBot = BOTS.find(b => b.id === activeBotId)!;
-  const activeHistory = chatHistories[activeBotId];
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+
+    // Load chat history for this user
+    getChatHistory()
+      .then((messages) => {
+        if (!messages || messages.length === 0) {
+          console.log("No previous history for this user.");
+          return;
+        }
+        const historiesByBot: Record<string, ChatMessage[]> = {};
+        messages.forEach((msg: any) => {
+          if (!historiesByBot[msg.bot_id]) historiesByBot[msg.bot_id] = [];
+          historiesByBot[msg.bot_id].push({
+            id: msg.id,
+            sender: msg.sender,
+            text: msg.text,
+            rating: msg.rating,
+            comment: msg.comment,
+          });
+        });
+        setChatHistories((prev) => ({ ...prev, ...historiesByBot }));
+      })
+      .catch((err) => console.error("Failed to load history:", err));
+  }, []);
+
+  const activeBot = bots.find(b => b.id === activeBotId) || bots[0];
+  const activeHistory = chatHistories[activeBotId || ""] || [];
 
   const handleSendMessage = async (text: string) => {
     const newUserMessage: ChatMessage = { id: crypto.randomUUID(), sender: 'user', text };
     setChatHistories(prev => ({
       ...prev,
-      [activeBotId]: [...prev[activeBotId], newUserMessage],
+      [activeBotId!]: [...prev[activeBotId!], newUserMessage],
     }));
 
     setIsBotLoading(true);
@@ -88,7 +80,7 @@ export default function ChatPage() {
     try {
       await fetchBotStreamResponse(
         text,
-        activeBot.id,
+        activeBotId!,
         async (chunk, messageId) => {
           const trimmed = chunk.trim();
           if (!trimmed) return;
@@ -108,7 +100,7 @@ export default function ChatPage() {
           };
           setChatHistories(prev => ({
             ...prev,
-            [activeBotId]: [...prev[activeBotId], newBubble],
+            [activeBotId!]: [...prev[activeBotId!], newBubble],
           }));
         },
         newControllerRef
@@ -158,16 +150,18 @@ export default function ChatPage() {
 
   const handleLogout = () => {
     logout();
-    // Dispatch storage event to trigger App.tsx's auth check
     window.dispatchEvent(new Event('storage'));
     navigate("/login");
   };
 
+  if (bots.length === 0) {
+    return <div className="flex h-screen items-center justify-center">Loading bots...</div>;
+  }
   return (
     <div className="flex h-screen text-gray-800">
       <div className={`${isChatOpen ? 'hidden' : 'flex w-full'} md:flex md:w-80 flex-col`}>
         <div className="flex-1 overflow-auto">
-          <BotSelector bots={BOTS} activeBotId={activeBotId} onSelectBot={(id) => { setActiveBotId(id); setIsChatOpen(true); }} />
+          <BotSelector bots={bots} activeBotId={activeBotId} onSelectBot={(id) => { setActiveBotId(id); setIsChatOpen(true); }} />
         </div>
         <div className="border-t p-4">
           <button

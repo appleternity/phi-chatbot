@@ -11,5 +11,5 @@ export interface BotProfile {
   name: string;
   avatarColor: string;
   description: string;
-  welcomeMessage: string;
+  welcome_message: string;
 }

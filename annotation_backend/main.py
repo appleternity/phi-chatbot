@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routes import auth, chat
+from routes import auth, bot, chat
 
 app = FastAPI(title="Chatbot Backend Service")
 
@@ -16,4 +16,5 @@ app.add_middleware(
 
 # Routers
 app.include_router(auth.router)
+app.include_router(bot.router)
 app.include_router(chat.router)
