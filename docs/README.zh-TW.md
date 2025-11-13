@@ -118,11 +118,7 @@ curl -X POST http://localhost:8000/chat \
 {
   "session_id": "user-123",
   "message": "我聽到您的感受了，感到焦慮是完全可以理解的。您願意談談是什麼讓您有這樣的感覺嗎？我在這裡傾聽。",
-  "agent": "emotional_support",
-  "metadata": {
-    "classification_reasoning": "使用者表達情緒困擾",
-    "classification_confidence": 0.95
-  }
+  "agent": "emotional_support"
 }
 ```
 

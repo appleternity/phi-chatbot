@@ -210,7 +210,7 @@ Analyze the user's message and determine which agent should handle their convers
 
 User message: {message}
 
-Classify the user's intent and provide your reasoning."""
+Respond with ONLY the agent name: either "emotional_support" or "rag_agent". No explanation needed."""
 
 def supervisor_node(state: MedicalChatState) -> Command[Literal["emotional_support", "rag_agent"]]:
     """Supervisor agent that classifies user intent and assigns appropriate agent.
@@ -220,25 +220,21 @@ def supervisor_node(state: MedicalChatState) -> Command[Literal["emotional_suppo
     # Get the last user message
     last_message = state["messages"][-1]
 
-    # Classify with structured output
-    classification = llm.with_structured_output(AgentClassification).invoke(
-        SUPERVISOR_PROMPT.format(message=last_message.content)
-    )
+    # Invoke LLM for classification (plain string output)
+    response = llm.invoke(SUPERVISOR_PROMPT.format(message=last_message.content))
+    agent_name = response.content.strip()
+
+    # Validate agent name
+    if agent_name not in {"emotional_support", "rag_agent"}:
+        raise ValueError(f"Invalid agent classification: '{agent_name}'")
 
     # Log classification (useful for debugging)
-    print(f"Supervisor classification: {classification.agent} (confidence: {classification.confidence:.2f})")
-    print(f"Reasoning: {classification.reasoning}")
+    print(f"Supervisor classification: {agent_name}")
 
     # Return command with assigned agent
     return Command(
-        goto=classification.agent,
-        update={
-            "assigned_agent": classification.agent,
-            "metadata": {
-                "classification_reasoning": classification.reasoning,
-                "classification_confidence": classification.confidence
-            }
-        }
+        goto=agent_name,
+        update={"assigned_agent": agent_name}
     )
 ```
 

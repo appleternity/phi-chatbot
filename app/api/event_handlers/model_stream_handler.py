@@ -55,7 +55,9 @@ class ModelStreamHandler:
         node_name = metadata.get("langgraph_node", "")
         tags = metadata.get("tags", [])
 
-        if node_name not in {"rag_agent", "emotional_support"}:
+        # With nested graphs, internal node names are exposed (retrieve, respond)
+        # not the parent node name (rag_agent)
+        if node_name not in {"rag_agent", "emotional_support", "retrieve", "respond"}:
             return  # Silently ignore - not from user-facing agent
 
         if "internal-llm" in tags:

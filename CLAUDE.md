@@ -518,6 +518,66 @@ embeddings = provider.encode(["query 1", "query 2"])  # Returns List[np.ndarray]
 dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
 ```
 
+### Router-Based RAG Architecture - Classification and Routing (2025-11-13)
+
+**Refactored RAG agent from tool-based to router-based architecture with intelligent classification**:
+
+- **Key Change**: RAG agent now uses 3-node router architecture instead of tool-based approach
+  - **classify**: LLM-based intent classification ("retrieve" vs. "respond")
+  - **retrieve**: Full RAG workflow (retrieve + format + generate)
+  - **respond**: Direct response without retrieval (greetings, thank yous, etc.)
+
+- **Architecture Benefits**:
+  - **Full State Access**: Retrieval node receives complete conversation state, not just string queries
+  - **Type Safety**: Restores `List[BaseMessage]` interface for history-aware retrieval
+  - **Intelligent Routing**: LLM classifies whether query needs knowledge base lookup
+  - **Efficiency**: Skips unnecessary retrieval for conversational queries
+
+- **Implementation Details**:
+  - `app/agents/rag_agent.py`: Complete rewrite with `create_rag_agent()` factory function
+  - Classification uses low temperature (0.1) for consistent routing decisions
+  - Generation uses higher temperature (1.0) for creative, natural responses
+  - Conditional edges use state-based routing (`lambda state: state["__routing"]`)
+
+- **Deleted Components**:
+  - `app/tools/medical_search.py`: Obsolete tool-based implementation removed
+  - `app/tools/__init__.py`: Updated to reflect tool deletion
+
+- **Testing**:
+  - Comprehensive test suite verified all routing paths work correctly
+  - Fixed FakeChatModel classification with word boundary matching
+  - Validated history-aware retrieval with multi-turn conversations
+
+- **Files Modified**:
+  - Updated: `app/agents/rag_agent.py` (complete rewrite), `app/tools/__init__.py`
+  - Deleted: `app/tools/medical_search.py`
+  - Enhanced: `tests/fakes/fake_chat_model.py` (classification support, word boundaries)
+
+### Simplified Supervisor - Removed Confidence Scores and Reasoning (2025-11-13)
+
+**Simplified supervisor classification by removing unnecessary complexity**:
+
+- **Key Change**: Removed structured output with confidence scores and reasoning
+  - Supervisor now returns plain text agent name instead of Pydantic model
+  - Removed `AgentClassification` model with `reasoning` and `confidence` fields
+  - Added `VALID_AGENTS` set for explicit validation
+  - Kept stream events for frontend integration
+
+- **Benefits**:
+  - **Simpler Implementation**: Easier to debug and maintain
+  - **Faster Classification**: No structured output parsing overhead
+  - **More Robust**: Explicit validation instead of schema enforcement
+  - **Cleaner Logs**: No unnecessary metadata cluttering logs
+
+- **Implementation Details**:
+  - `app/agents/supervisor.py`: Use `llm.invoke()` instead of `llm.with_structured_output()`
+  - `app/utils/prompts.py`: Updated to request plain text output only
+  - Validation logic explicitly checks against `VALID_AGENTS` set
+  - Stream events preserved for routing:started and routing:complete
+
+- **Files Modified**:
+  - Updated: `app/agents/supervisor.py`, `app/utils/prompts.py`
+
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
 
 **Enhanced retriever interface to accept conversation history for context-aware retrieval**:
