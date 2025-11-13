@@ -5,7 +5,7 @@ import ChatWindow from '../components/ChatWindow';
 import BotSelector from '../components/BotSelector';
 import { fetchBotResponse, fetchBotStreamResponse, sendFeedback, getChatHistory } from '../services/chatService';
 import { getToken, logout } from "../services/authService";
-import { fetchBots, createInitialHistories } from '../services/botService';
+import { fetchBots } from '../services/botService';
 
 
 export default function ChatPage() {
@@ -21,7 +21,6 @@ export default function ChatPage() {
       if (data.bots && data.bots.length > 0) {
         setBots(data.bots);
         setActiveBotId(data.bots[0]?.id || null);
-        setChatHistories(createInitialHistories(data.bots));
       } else {
         console.error("No bots found.");
       }
