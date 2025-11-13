@@ -22,9 +22,6 @@ from typing import Optional
 
 import asyncpg
 from asyncpg import Connection
-import typer
-from rich.console import Console
-from rich.panel import Panel
 
 
 # SQL for creating pgvector extension
@@ -602,265 +599,53 @@ async def get_table_stats(conn: Connection) -> dict:
         }
 
 
-# Typer CLI app
-app = typer.Typer(
-    name="db-schema",
-    help="Database schema management for PostgreSQL with pgvector",
-    add_completion=False,
-)
-
-
-@app.command()
-def migrate(
-    host: str = typer.Option(
-        "localhost",
-        "--host",
-        "-h",
-        help="PostgreSQL host"
-    ),
-    port: int = typer.Option(
-        5432,
-        "--port",
-        "-p",
-        help="PostgreSQL port"
-    ),
-    database: str = typer.Option(
-        "semantic_search",
-        "--database",
-        "-d",
-        help="Database name"
-    ),
-    user: str = typer.Option(
-        "postgres",
-        "--user",
-        "-u",
-        help="Database user"
-    ),
-    password: Optional[str] = typer.Option(
-        None,
-        "--password",
-        help="Database password (omit for no password)"
-    ),
-    embedding_dim: int = typer.Option(
-        1024,
-        "--embedding-dim",
-        help="Embedding vector dimension (128-64000, pgvector 0.7.0+)"
-    ),
-    no_create_db: bool = typer.Option(
-        False,
-        "--no-create-db",
-        help="Skip database creation, only create schema"
-    ),
-) -> None:
+async def enable_keyword_search(conn: Connection, table_name: str = "vector_chunks") -> None:
     """
-    Smart migration: create database if needed, then create schema.
+    Enable pg_trgm extension and create GIN index for keyword search.
 
-    Examples:
-        # Create database + schema with 1024-dim embeddings
-        python -m app.db.schema migrate --database semantic_search
+    This function enables the PostgreSQL pg_trgm extension for trigram-based
+    fuzzy text matching and creates a GIN index on the chunk_text column for
+    fast keyword similarity queries.
 
-        # Create database + schema with 8192-dim embeddings
-        python -m app.db.schema migrate --database semantic_search_8k --embedding-dim 8192
+    This is idempotent - safe to run multiple times.
 
-        # Only create schema (skip database creation)
-        python -m app.db.schema migrate --no-create-db
-    """
-    console = Console()
+    Args:
+        conn: Active asyncpg connection
+        table_name: Table name to create index on (default: "vector_chunks")
+                   Supports special characters (e.g., "text-embedding-v4")
 
-    # Validate embedding dimension
-    if not 128 <= embedding_dim <= 64000:
-        console.print(f"[red]❌ Invalid embedding dimension: {embedding_dim}[/red]")
-        console.print("[yellow]Must be between 128 and 64000 (pgvector 0.7.0+)[/yellow]")
-        raise typer.Exit(code=1)
-
-    # Run migration
-    try:
-        asyncio.run(migrate_database(
-            host=host,
-            port=port,
-            database=database,
-            user=user,
-            password=password,
-            embedding_dim=embedding_dim,
-            create_db=not no_create_db,
-        ))
-        console.print("\n[green]✅ Migration completed successfully![/green]")
-    except Exception as e:
-        console.print(f"\n[red]❌ Migration failed: {e}[/red]")
-        raise typer.Exit(code=2)
-
-
-@app.command()
-def verify(
-    host: str = typer.Option("localhost", "--host", "-h", help="PostgreSQL host"),
-    port: int = typer.Option(5432, "--port", "-p", help="PostgreSQL port"),
-    database: str = typer.Option("semantic_search", "--database", "-d", help="Database name"),
-    user: str = typer.Option("postgres", "--user", "-u", help="Database user"),
-    password: Optional[str] = typer.Option(None, "--password", help="Database password"),
-) -> None:
-    """
-    Verify database schema is correctly set up.
+    Raises:
+        asyncpg.PostgresError: If extension or index creation fails
 
     Example:
-        python -m app.db.schema verify --database semantic_search
+        >>> conn = await asyncpg.connect(...)
+        >>> await enable_keyword_search(conn, table_name="text-embedding-v4")
+        ✅ pg_trgm extension enabled and GIN index created on table 'text-embedding-v4'
     """
-    console = Console()
+    # Enable pg_trgm extension
+    await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
 
-    async def run_verify() -> int:
-        conn = None
-        try:
-            conn = await asyncpg.connect(
-                host=host, port=port, database=database,
-                user=user, password=password,
-            )
+    # Check if index already exists on this table
+    index_check = await conn.fetchval("""
+        SELECT schemaname || '.' || tablename
+        FROM pg_indexes
+        WHERE indexname = 'idx_chunk_text_trgm'
+        AND tablename != $1
+    """, table_name)
 
-            is_valid = await verify_schema(conn)
+    if index_check:
+        raise Exception(
+            f"Index 'idx_chunk_text_trgm' already exists on table '{index_check}'. "
+            f"Cannot create the same index on table '{table_name}'. "
+            f"Please drop the existing index first or use a different table."
+        )
 
-            if is_valid:
-                console.print("\n[green]✅ Schema verification passed![/green]")
-                return 0
-            else:
-                console.print("\n[red]❌ Schema verification failed![/red]")
-                return 1
+    # Create GIN index on chunk_text for trigram similarity search
+    # Use quoted table name to support special characters (e.g., hyphens)
+    await conn.execute(f"""
+        CREATE INDEX IF NOT EXISTS idx_chunk_text_trgm
+        ON "{table_name}"
+        USING GIN (chunk_text gin_trgm_ops);
+    """)
 
-        except asyncpg.PostgresError as e:
-            console.print(f"\n[red]❌ Connection failed: {e}[/red]")
-            return 2
-        finally:
-            if conn:
-                await conn.close()
-
-    exit_code = asyncio.run(run_verify())
-    raise typer.Exit(code=exit_code)
-
-
-@app.command()
-def stats(
-    host: str = typer.Option("localhost", "--host", "-h", help="PostgreSQL host"),
-    port: int = typer.Option(5432, "--port", "-p", help="PostgreSQL port"),
-    database: str = typer.Option("semantic_search", "--database", "-d", help="Database name"),
-    user: str = typer.Option("postgres", "--user", "-u", help="Database user"),
-    password: Optional[str] = typer.Option(None, "--password", help="Database password"),
-) -> None:
-    """
-    Display database statistics.
-
-    Example:
-        python -m app.db.schema stats --database semantic_search
-    """
-    from rich.table import Table
-    console = Console()
-
-    async def run_stats() -> int:
-        conn = None
-        try:
-            conn = await asyncpg.connect(
-                host=host, port=port, database=database,
-                user=user, password=password,
-            )
-
-            stats_data = await get_table_stats(conn)
-
-            # Display results table
-            table = Table(title="\nDatabase Statistics", show_header=True, header_style="bold magenta")
-            table.add_column("Metric", style="cyan", width=25)
-            table.add_column("Value", style="white", width=20)
-
-            table.add_row("Total Chunks", str(stats_data["total_chunks"]))
-            table.add_row("Unique Documents", str(stats_data["unique_documents"]))
-            table.add_row("Avg Token Count", str(stats_data["avg_token_count"]))
-            table.add_row("Total Size (MB)", str(stats_data["total_size_mb"]))
-
-            console.print(table)
-            console.print("\n[green]✅ Statistics retrieved successfully![/green]")
-            return 0
-
-        except asyncpg.PostgresError as e:
-            console.print(f"\n[red]❌ Connection failed: {e}[/red]")
-            return 2
-        finally:
-            if conn:
-                await conn.close()
-
-    exit_code = asyncio.run(run_stats())
-    raise typer.Exit(code=exit_code)
-
-
-@app.command()
-def drop(
-    host: str = typer.Option("localhost", "--host", "-h", help="PostgreSQL host"),
-    port: int = typer.Option(5432, "--port", "-p", help="PostgreSQL port"),
-    database: str = typer.Option("semantic_search", "--database", "-d", help="Database name"),
-    user: str = typer.Option("postgres", "--user", "-u", help="Database user"),
-    password: Optional[str] = typer.Option(None, "--password", help="Database password"),
-    force: bool = typer.Option(False, "--force", help="Skip confirmation prompt"),
-) -> None:
-    """
-    Drop all indexes and tables (DESTRUCTIVE OPERATION).
-
-    WARNING: This will delete all data in the vector_chunks table.
-
-    Example:
-        python -m app.db.schema drop --database semantic_search
-        python -m app.db.schema drop --database semantic_search --force
-    """
-    console = Console()
-
-    async def run_drop() -> int:
-        conn = None
-        try:
-            conn = await asyncpg.connect(
-                host=host, port=port, database=database,
-                user=user, password=password,
-            )
-
-            # Get table stats
-            stats_data = await get_table_stats(conn)
-            chunk_count = stats_data["total_chunks"]
-
-            if chunk_count == 0:
-                console.print("[dim]ℹ️  Table is already empty (0 chunks)[/dim]")
-                console.print("[yellow]Dropping schema anyway...[/yellow]")
-            else:
-                # Show warning panel
-                console.print(Panel.fit(
-                    f"[bold red]⚠️  WARNING: Schema Deletion[/bold red]\n\n"
-                    f"This will permanently delete [bold red]{chunk_count}[/bold red] chunks.\n"
-                    f"[dim]Database:[/dim] [bold red]{database}[/bold red]\n"
-                    f"[dim]Table:[/dim] vector_chunks\n\n"
-                    f"[yellow]This action cannot be undone![/yellow]",
-                    border_style="red",
-                    title="[red]DANGER ZONE[/red]"
-                ))
-
-                # Ask for confirmation unless --force is used
-                if not force:
-                    confirmation = typer.prompt(
-                        "\n🔴 Type 'yes' to confirm deletion",
-                        default="no"
-                    )
-
-                    if confirmation.lower() not in ["yes", "y"]:
-                        console.print("[yellow]❌ Deletion cancelled[/yellow]")
-                        return 0
-
-            # Drop schema
-            console.print("[yellow]⏳ Dropping schema...[/yellow]")
-            await drop_schema(conn)
-            console.print("[green]✅ Schema dropped successfully[/green]")
-            return 0
-
-        except asyncpg.PostgresError as e:
-            console.print(f"\n[red]❌ Drop failed: {e}[/red]")
-            return 2
-        finally:
-            if conn:
-                await conn.close()
-
-    exit_code = asyncio.run(run_drop())
-    raise typer.Exit(code=exit_code)
-
-
-# CLI entry point
-if __name__ == "__main__":
-    app()
+    print(f"✅ pg_trgm extension enabled and GIN index created on table '{table_name}'")
