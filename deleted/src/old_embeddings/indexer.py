@@ -44,7 +44,7 @@ from rich.progress import (
     MofNCompleteColumn,
 )
 
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from research.old_embeddings.encoder import Qwen3EmbeddingEncoder
 from src.embeddings.models import ChunkMetadata, VectorDocument
 from app.db.connection import DatabasePool
 

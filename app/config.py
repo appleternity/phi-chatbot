@@ -26,14 +26,10 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 3600
     environment: str = "development"
 
-    # Embedding Model
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    embedding_dim: int = 384
-
-    # Embedding Persistence Settings
-    # IMPORTANT: Embeddings must be pre-computed before starting the service
-    # Run: python -m src.precompute_embeddings (for medical docs)
-    index_path: str = "data/embeddings/"  # Path to pre-computed medical embeddings
+    # Streaming Configuration (FR-014: idle timeout for SSE streams)
+    # Maximum seconds of stream inactivity before timeout
+    # Note: This is IDLE timeout (no events), not total execution time
+    stream_idle_timeout: int = 30
 
     # Retrieval Settings
     top_k_documents: int = 5
@@ -50,9 +46,6 @@ class Settings(BaseSettings):
         """Construct PostgreSQL connection URL from components."""
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 
-    # embedding model
-    embedding_model_name: str = "Qwen/Qwen3-Embedding-0.6B"
-
     # Retrieval Strategy Configuration
     # Options: "simple" (no reranking), "rerank" (two-stage), "advanced" (query expansion + rerank)
     RETRIEVAL_STRATEGY: str = "advanced"
@@ -66,11 +59,62 @@ class Settings(BaseSettings):
     ENABLE_RETRIES: bool = False
 
     # Model Names (standardized uppercase constants)
-    EMBEDDING_MODEL: str = "Qwen/Qwen3-Embedding-0.6B"
+    # EMBEDDING_MODEL: str = "Qwen/Qwen3-Embedding-0.6B"
+    EMBEDDING_MODEL: str = "text-embedding-v4"
+
     RERANKER_MODEL: str = "Qwen/Qwen3-Reranker-0.6B"
+
+    # Embedding Provider Configuration (004-cloud-embedding-refactor)
+    # Options: "local" (Qwen3-Embedding-0.6B on device), "openrouter" (Qwen3 API), "aliyun" (text-embedding-v4)
+    embedding_provider: str = "aliyun"
+
+    # Device for local embedding provider (mps/cuda/cpu)
+    # Auto-detection fallback in encoder if device unavailable
+    device: str = "mps"
+    batch_size: int = 10
+
+    # Aliyun DashScope API Key (for embedding_provider="aliyun")
+    aliyun_api_key: str = ""
+
+    # Database table name for vector embeddings (supports A/B testing with multiple tables)
+    table_name: str = "text-embedding-v4"
 
     # API Authentication (001-api-bearer-auth)
     API_BEARER_TOKEN: str
+
+    @field_validator("embedding_provider")
+    @classmethod
+    def validate_embedding_provider(cls, v: str) -> str:
+        """Validate embedding_provider is one of the supported values."""
+        valid_providers = ["local", "openrouter", "aliyun"]
+        if v not in valid_providers:
+            raise ValueError(
+                f"Invalid embedding_provider: '{v}'. "
+                f"Must be one of: {', '.join(valid_providers)}"
+            )
+        return v
+
+    @field_validator("table_name")
+    @classmethod
+    def validate_table_name(cls, v: str) -> str:
+        """Validate table_name is a safe SQL identifier.
+
+        Security: Prevents SQL injection by enforcing strict whitelist.
+        Only predefined table names are allowed for production safety.
+        """
+        # Whitelist of allowed table names (for A/B testing scenarios)
+        allowed_tables = frozenset({
+            "vector_chunks",
+            "text-embedding-v4",
+            "qwen3-8b-openrouter"
+        })
+
+        # Strict whitelist enforcement - reject anything not explicitly allowed
+        assert v in allowed_tables, \
+            f"Invalid table name: '{v}'. " \
+            f"Allowed tables: {', '.join(sorted(allowed_tables))}"
+
+        return v
 
     @field_validator("API_BEARER_TOKEN")
     @classmethod

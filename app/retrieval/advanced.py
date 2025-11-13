@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage
 
 from app.db.connection import DatabasePool
 from app.retrieval.utils import extract_retrieval_query, format_conversation_context
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from app.embeddings import EmbeddingProvider
 from app.core.qwen3_reranker import Qwen3Reranker
 from app.agents.base import create_llm
 
@@ -29,7 +29,7 @@ class AdvancedRetriever:
 
     Attributes:
         pool: Database connection pool
-        encoder: Embedding encoder
+        encoder: Embedding provider (local/cloud)
         reranker: Qwen3-Reranker for scoring
         llm: LLM for query expansion
     """
@@ -37,8 +37,9 @@ class AdvancedRetriever:
     def __init__(
         self,
         pool: DatabasePool,
-        encoder: Qwen3EmbeddingEncoder,
+        encoder: EmbeddingProvider,
         reranker: Qwen3Reranker,
+        table_name: str = "vector_chunks",
     ):
         """Initialize advanced retriever.
 
@@ -46,13 +47,15 @@ class AdvancedRetriever:
             pool: Initialized database pool
             encoder: Initialized embedding encoder
             reranker: Initialized reranker model
+            table_name: Table name (default: "vector_chunks")
         """
         self.pool = pool
         self.encoder = encoder
         self.reranker = reranker
+        self.table_name = table_name
         self.llm = create_llm(temperature=1.0, disable_streaming=True, tags=["internal-llm"])
 
-        logger.info("AdvancedRetriever initialized (query expansion + reranking)")
+        logger.info(f"AdvancedRetriever initialized (table={table_name}, query expansion + reranking)")
 
     async def expand_query(
         self,
@@ -297,7 +300,7 @@ Now generate variations:"""
         filters: Optional[Dict[str, Any]] = None
     ) -> tuple[str, List[Any]]:
         """Build SQL query (same as other retrievers)."""
-        sql = """
+        sql = f"""
         SELECT
             chunk_id,
             chunk_text,
@@ -308,7 +311,7 @@ Now generate variations:"""
             summary,
             token_count,
             1 - (embedding <=> $1) AS similarity_score
-        FROM vector_chunks
+        FROM "{self.table_name}"
         """
 
         params = [embedding]

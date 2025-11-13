@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OpenRouter Embedding API Schema",
+  "description": "API contract for OpenRouter embedding endpoint (OpenAI-compatible)",
+  "request": {
+    "title": "EmbeddingRequest",
+    "type": "object",
+    "required": ["model", "input"],
+    "properties": {
+      "model": {
+        "type": "string",
+        "const": "qwen/qwen3-embedding-0.6b",
+        "description": "Model identifier for Qwen3-Embedding-0.6B"
+      },
+      "input": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Single text to embed"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Batch of texts to embed",
+            "maxItems": 100
+          }
+        ]
+      }
+    },
+    "example": {
+      "model": "qwen/qwen3-embedding-0.6b",
+      "input": [
+        "What are the side effects of aripiprazole?",
+        "How does aripiprazole work?"
+      ]
+    }
+  },
+  "response": {
+    "title": "EmbeddingResponse",
+    "type": "object",
+    "required": ["object", "data", "model", "usage"],
+    "properties": {
+      "object": {
+        "type": "string",
+        "const": "list",
+        "description": "Response object type"
+      },
+      "data": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["object", "index", "embedding"],
+          "properties": {
+            "object": {
+              "type": "string",
+              "const": "embedding"
+            },
+            "index": {
+              "type": "integer",
+              "description": "Index in input array (matches input order)"
+            },
+            "embedding": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 1024,
+              "maxItems": 1024,
+              "description": "1024-dimensional dense embedding"
+            }
+          }
+        }
+      },
+      "model": {
+        "type": "string",
+        "description": "Model used for generation"
+      },
+      "usage": {
+        "type": "object",
+        "required": ["prompt_tokens", "total_tokens"],
+        "properties": {
+          "prompt_tokens": {
+            "type": "integer",
+            "description": "Number of tokens in input"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "description": "Total tokens processed"
+          }
+        }
+      }
+    },
+    "example": {
+      "object": "list",
+      "data": [
+        {
+          "object": "embedding",
+          "index": 0,
+          "embedding": [0.123, -0.456, 0.789, "..."]
+        },
+        {
+          "object": "embedding",
+          "index": 1,
+          "embedding": [0.234, -0.567, 0.890, "..."]
+        }
+      ],
+      "model": "qwen/qwen3-embedding-0.6b",
+      "usage": {
+        "prompt_tokens": 42,
+        "total_tokens": 42
+      }
+    }
+  },
+  "errors": {
+    "title": "ErrorResponse",
+    "type": "object",
+    "required": ["error"],
+    "properties": {
+      "error": {
+        "type": "object",
+        "required": ["message", "type", "code"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human-readable error message"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "invalid_request_error",
+              "authentication_error",
+              "rate_limit_error",
+              "server_error"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "description": "Error code identifier"
+          }
+        }
+      }
+    },
+    "examples": {
+      "authentication_error": {
+        "error": {
+          "message": "Invalid API key provided",
+          "type": "authentication_error",
+          "code": "invalid_api_key"
+        }
+      },
+      "rate_limit_error": {
+        "error": {
+          "message": "Rate limit exceeded",
+          "type": "rate_limit_error",
+          "code": "rate_limit_exceeded"
+        }
+      }
+    }
+  },
+  "api_details": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "endpoint": "/embeddings",
+    "method": "POST",
+    "authentication": {
+      "type": "bearer",
+      "header": "Authorization: Bearer {api_key}"
+    },
+    "rate_limits": {
+      "note": "No documented batch size limit, use 100 as safe default"
+    }
+  }
+}

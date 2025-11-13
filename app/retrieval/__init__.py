@@ -9,11 +9,15 @@ Three strategies available:
 from app.retrieval.simple import SimpleRetriever
 from app.retrieval.rerank import RerankRetriever
 from app.retrieval.advanced import AdvancedRetriever
-from app.retrieval.factory import get_retriever
+from app.retrieval.factory import create_retriever
+
+# Backward compatibility alias
+get_retriever = create_retriever
 
 __all__ = [
     "SimpleRetriever",
     "RerankRetriever",
     "AdvancedRetriever",
-    "get_retriever",
+    "create_retriever",
+    "get_retriever",  # Alias for backward compatibility
 ]

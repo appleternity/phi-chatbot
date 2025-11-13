@@ -3,20 +3,13 @@
 Auto-generated from all feature plans. Last updated: 2025-10-29
 
 ## Active Technologies
-- Python 3.11+ + transformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI (002-semantic-search)
-- PostgreSQL 15+ with pgvector extension (002-semantic-search)
-- Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming (003-sse-streaming)
-- PostgreSQL 15+ with pgvector (existing - no changes needed) (003-sse-streaming)
-- Python 3.11+ + FastAPI 0.115+, Python secrets module (stdlib) (001-api-bearer-auth)
-- N/A (stateless validation, no database needed) (001-api-bearer-auth)
-- Python 3.11+ + FastAPI 0.115+, Python `secrets` module (stdlib), `hmac` module (stdlib for constant-time comparison) (001-api-bearer-auth)
-- N/A (stateless validation, no database required) (001-api-bearer-auth)
-
-- Python 3.11+ (001-llm-contextual-chunking)
-- OpenRouter API for LLM calls
-- Pydantic 2.x for data validation
-- Tiktoken for token counting
-- Typer for CLI
+- **Python 3.11+** with FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+
+- **Embeddings**: Multi-provider support (local Qwen3, OpenRouter API, Aliyun DashScope) via OpenAI Python client
+- **Database**: PostgreSQL 15+ with pgvector extension for vector similarity search
+- **ML Models**: transformers, torch (MPS support), sentence-transformers for local embedding generation
+- **Streaming**: httpx 0.27+ for async SSE streaming
+- **Authentication**: Bearer token with hmac constant-time comparison (stdlib)
+- **LLM Chunking**: OpenRouter API, Pydantic 2.x, Tiktoken, Typer CLI
 
 ## Project Structure
 
@@ -33,16 +26,19 @@ src/
     metadata_validator.py   # Validation utilities
     text_aligner.py         # Coverage validation
 
-  embeddings/               # Semantic search indexing (002-semantic-search)
-    models.py               # ChunkMetadata, VectorDocument
-    encoder.py              # Qwen3EmbeddingEncoder (MPS support)
-    indexer.py              # Batch indexing pipeline
-    cli.py                  # CLI commands: index, validate, version
-
 app/
+  embeddings/               # Cloud embedding refactor (004-cloud-embedding-refactor)
+    base.py                 # EmbeddingProvider protocol interface
+    factory.py              # Multi-provider factory (local/openrouter/aliyun)
+    local_encoder.py        # LocalEmbeddingProvider (Qwen3-Embedding-0.6B on MPS/CUDA/CPU)
+    openrouter_provider.py  # OpenRouterEmbeddingProvider (Qwen3-Embedding-0.6B API)
+    aliyun_provider.py      # AliyunEmbeddingProvider (text-embedding-v4 API)
+    utils.py                # Retry logic, error handling utilities
+
   core/
     postgres_retriever.py   # PostgreSQL + pgvector retriever
     qwen3_reranker.py       # Qwen3-Reranker-0.6B for reranking
+
   db/
     schema.py               # Database schema and migrations
     connection.py           # Connection pooling with asyncpg
@@ -379,21 +375,19 @@ python -m src.embeddings.cli version
 ```python
 import asyncio
 from app.core.postgres_retriever import PostgreSQLRetriever
-from app.db.connection import get_pool, close_pool
+from app.db.connection import DatabasePool
 
 async def test_search():
-    pool = await get_pool()
-    retriever = PostgreSQLRetriever(pool)
+    async with DatabasePool() as pool:
+        retriever = PostgreSQLRetriever(pool)
 
-    # Search with reranking (default)
-    results = await retriever.search("aripiprazole mechanism of action", top_k=5)
+        # Search with reranking (default)
+        results = await retriever.search("aripiprazole mechanism of action", top_k=5)
 
-    for i, doc in enumerate(results, 1):
-        print(f"\n{i}. {doc.metadata['chunk_id']}")
-        print(f"   Score: {doc.metadata['rerank_score']:.4f}")
-        print(f"   Content: {doc.content[:200]}...")
-
-    await close_pool()
+        for i, doc in enumerate(results, 1):
+            print(f"\n{i}. {doc.metadata['chunk_id']}")
+            print(f"   Score: {doc.metadata['rerank_score']:.4f}")
+            print(f"   Content: {doc.content[:200]}...")
 
 asyncio.run(test_search())
 ```
@@ -443,9 +437,86 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 - Comprehensive docstrings for all public methods
 
 ## Recent Changes
-- 001-api-bearer-auth: Added Python 3.11+ + FastAPI 0.115+, Python `secrets` module (stdlib), `hmac` module (stdlib for constant-time comparison)
-- 001-api-bearer-auth: Added Python 3.11+ + FastAPI 0.115+, Python secrets module (stdlib)
-- 003-sse-streaming: Added Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming
+
+### API Bearer Authentication (2025-11-12)
+
+**Added secure Bearer token authentication for all API endpoints**:
+
+- **Security-first design**: Constant-time token comparison using `hmac.compare_digest`
+- **Strict validation**: 64+ hexadecimal characters (256-bit entropy minimum)
+- **Comprehensive logging**: Authentication events tracked without exposing token values
+- **Test coverage**: Contract, integration, unit, and concurrent auth tests
+
+**Configuration**:
+  - `API_BEARER_TOKEN`: Required environment variable (validated at startup)
+  - Generate: `openssl rand -hex 32` for 64-character token
+  - Validation: Pydantic validator enforces format and length requirements
+
+**Files Added**:
+  - `app/core/auth/`: Authentication module (bearer_token.py, dependencies.py, logging.py, models.py)
+  - `tests/contract/test_auth_contract.py`: Contract tests
+  - `tests/integration/test_auth_integration.py`: Integration tests
+  - `tests/unit/test_bearer_token.py`: Unit tests
+
+### Cloud Embedding Refactor - Multi-Provider Architecture (2025-11-12)
+
+**Refactored embedding system from `src/embeddings` to `app/embeddings` with multi-provider support**:
+
+**Architecture**:
+  - **Protocol-based design**: `EmbeddingProvider` ABC defines common interface
+  - **Factory pattern**: `EmbeddingProviderFactory` creates providers based on `EMBEDDING_PROVIDER` environment variable
+  - **Three providers**: Local (Qwen3 on MPS/CUDA/CPU), OpenRouter API, Aliyun DashScope
+  - **Unified interface**: `encode()`, `get_provider_name()` - dimension detected dynamically from embeddings
+
+**Providers**:
+  - **LocalEmbeddingProvider**: Configurable HuggingFace models (default: Qwen3-Embedding-0.6B, 1024-dim) on MPS/CUDA/CPU
+  - **OpenRouterEmbeddingProvider**: Configurable OpenRouter models (default: qwen/qwen3-embedding-0.6b, 1024-dim)
+  - **AliyunEmbeddingProvider**: Configurable Aliyun DashScope models (default: text-embedding-v4, 1024-dim dense format)
+
+**Configuration**:
+  - `EMBEDDING_PROVIDER`: "local", "openrouter", or "aliyun"
+  - `EMBEDDING_MODEL`: Model name/identifier (provider-specific format)
+  - `OPENAI_API_KEY`: Required for OpenRouter provider
+  - `ALIYUN_API_KEY`: Required for Aliyun provider
+  - `device`: Device for local provider (mps/cuda/cpu, auto-fallback)
+  - No API keys required for local provider
+
+**Benefits**:
+  - **Zero vendor lock-in**: Switch providers via environment variable
+  - **Model flexibility**: Configure models per provider via `--model` parameter
+  - **Dynamic dimensions**: No hardcoded dimensions, supports any embedding size
+  - **Cost flexibility**: Local (free, hardware-dependent) vs Cloud (pay-per-use, scalable)
+  - **Performance trade-offs**: Local (fast, requires GPU) vs Cloud (consistent, network latency)
+  - **Reliability**: Retry logic with exponential backoff, batch processing, error handling
+
+**Migration**:
+  - Eliminated: `src/embeddings/` module (encoder.py, indexer.py, cli.py, models.py)
+  - Created: `app/embeddings/` module with protocol-based design
+  - Test coverage: 56 passing tests (contract, integration, unit), 66.8% coverage for app.embeddings
+  - Type safety: mypy type checking with minimal errors
+
+**Usage**:
+```python
+from app.embeddings.factory import create_embedding_provider
+from app.config import settings
+
+# Create provider with explicit parameters from settings
+provider = create_embedding_provider(
+    provider_type=settings.embedding_provider,
+    embedding_model=settings.EMBEDDING_MODEL,  # Model name is now actually used!
+    device=settings.device,
+    batch_size=10,  # Optional, defaults to 10
+    openai_api_key=settings.openai_api_key,
+    aliyun_api_key=settings.aliyun_api_key,
+)
+
+# Unified interface across all providers
+embedding = provider.encode("test query")  # Returns np.ndarray (dimension depends on model)
+embeddings = provider.encode(["query 1", "query 2"])  # Returns List[np.ndarray]
+
+# Get dimension dynamically from actual embedding
+dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
+```
 
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
 

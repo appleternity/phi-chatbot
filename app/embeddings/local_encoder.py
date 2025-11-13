@@ -1,7 +1,7 @@
 """
 Qwen3-Embedding-0.6B encoder with Apple MPS support.
 
-This module provides the Qwen3EmbeddingEncoder class for generating 1024-dimensional
+This module provides the Qwen3EmbeddingProvider class for generating 1024-dimensional
 embeddings using the Qwen3-Embedding-0.6B model with MPS (Metal Performance Shaders)
 acceleration on Apple Silicon.
 
@@ -11,11 +11,12 @@ Key Features:
 - Mean pooling on last_hidden_state
 - Optional L2 normalization
 - torch.float32 for MPS compatibility (float16 not supported on MPS)
+- Ultra fail-fast design: all exceptions propagate naturally
 
 Usage:
-    from src.embeddings.encoder import Qwen3EmbeddingEncoder
+    from app.embeddings.local_encoder import Qwen3EmbeddingProvider
 
-    encoder = Qwen3EmbeddingEncoder(
+    provider = Qwen3EmbeddingProvider(
         model_name="Qwen/Qwen3-Embedding-0.6B",
         device="mps",
         batch_size=16,
@@ -23,10 +24,10 @@ Usage:
     )
 
     # Single text
-    embedding = encoder.encode("What are the side effects of aripiprazole?")
+    embedding = provider.encode("What are the side effects of aripiprazole?")
 
     # Multiple texts
-    embeddings = encoder.encode([
+    embeddings = provider.encode([
         "What are the side effects of aripiprazole?",
         "How does aripiprazole work?"
     ])
@@ -39,16 +40,18 @@ import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
 
+from app.embeddings.base import EmbeddingProvider
+
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 
-class Qwen3EmbeddingEncoder:
+class Qwen3EmbeddingProvider(EmbeddingProvider):
     """
-    Qwen3-Embedding-0.6B encoder with MPS support for Apple Silicon.
+    Qwen3-Embedding-0.6B local provider with MPS support.
 
-    This encoder generates 1024-dimensional embeddings using the Qwen3-Embedding-0.6B
+    This provider generates 1024-dimensional embeddings using the Qwen3-Embedding-0.6B
     model with support for MPS (Apple Silicon), CUDA, and CPU devices.
 
     Attributes:
@@ -72,7 +75,7 @@ class Qwen3EmbeddingEncoder:
         instruction: Optional[str] = None,
     ):
         """
-        Initialize Qwen3EmbeddingEncoder with direct parameters.
+        Initialize Qwen3EmbeddingProvider with direct parameters.
 
         Args:
             model_name: HuggingFace model ID (default: Qwen/Qwen3-Embedding-0.6B)
@@ -83,8 +86,8 @@ class Qwen3EmbeddingEncoder:
             instruction: Optional task-specific instruction prefix (default: None)
 
         Raises:
-            RuntimeError: If model fails to load or device is unavailable
-            ValueError: If parameters are out of valid ranges
+            AssertionError: If parameters are invalid
+            Exception: If model/tokenizer loading fails (propagates naturally)
         """
         # Validate parameters
         assert batch_size >= 1, f"batch_size must be >= 1, got {batch_size}"
@@ -101,27 +104,23 @@ class Qwen3EmbeddingEncoder:
         self.device = self._select_device(device)
         logger.info(f"Using device: {self.device}")
 
-        # Load tokenizer
+        # Load tokenizer (let exceptions propagate)
         logger.info(f"Loading tokenizer: {model_name}")
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        except Exception as e:
-            logger.error(f"Failed to load tokenizer: {e}")
-            raise RuntimeError(f"Failed to load tokenizer from {model_name}: {e}")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-        # Load model with MPS-compatible float32
+        # Load model with MPS-compatible float32 (let exceptions propagate)
         logger.info(f"Loading model: {model_name}")
-        try:
-            self.model = AutoModel.from_pretrained(
+        self.model = (
+            AutoModel.from_pretrained(
                 model_name,
-                dtype=torch.float32,  # MPS requires float32 (float16 not supported)
-            ).to(self.device).eval()
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            raise RuntimeError(f"Failed to load model from {model_name}: {e}")
+                torch_dtype=torch.float32,  # MPS requires float32 (float16 not supported)
+            )
+            .to(self.device)
+            .eval()
+        )
 
         logger.info(
-            f"Encoder initialized: device={self.device}, "
+            f"Qwen3 provider initialized: device={self.device}, "
             f"batch_size={batch_size}, "
             f"normalize={normalize_embeddings}"
         )
@@ -164,7 +163,7 @@ class Qwen3EmbeddingEncoder:
         self,
         texts: Union[str, List[str]],
         batch_size: Optional[int] = None,
-        show_progress: bool = False
+        show_progress: bool = False,
     ) -> Union[np.ndarray, List[np.ndarray]]:
         """
         Generate embeddings for input text(s).
@@ -179,30 +178,33 @@ class Qwen3EmbeddingEncoder:
             - If multiple texts: list of numpy arrays, each of shape (1024,)
 
         Raises:
-            ValueError: If texts is empty or contains empty strings
-            RuntimeError: If embedding generation fails
+            AssertionError: If texts is empty or contains invalid inputs
+            Exception: If embedding generation fails (propagates naturally)
 
         Example:
-            >>> encoder = Qwen3EmbeddingEncoder(config)
+            >>> provider = Qwen3EmbeddingProvider()
             >>> # Single text
-            >>> embedding = encoder.encode("What are side effects?")
+            >>> embedding = provider.encode("What are side effects?")
             >>> embedding.shape
             (1024,)
             >>> # Multiple texts
-            >>> embeddings = encoder.encode(["Text 1", "Text 2"])
+            >>> embeddings = provider.encode(["Text 1", "Text 2"])
             >>> len(embeddings)
             2
         """
         # Handle single text input
         is_single = isinstance(texts, str)
+        text_list: List[str]
         if is_single:
-            texts = [texts]
+            text_list = [texts]  # type: ignore[list-item]
+        else:
+            text_list = texts  # type: ignore[assignment]
 
         # Validate inputs
-        if not texts:
-            raise ValueError("texts cannot be empty")
-        if any(not text or not text.strip() for text in texts):
-            raise ValueError("texts contains empty or whitespace-only strings")
+        assert text_list, "texts cannot be empty"
+        assert all(text and text.strip() for text in text_list), "texts contains empty or whitespace-only strings"
+
+        logger.info(f"Encoding {len(text_list)} texts with local Qwen3 provider")
 
         # Use instance batch size if not specified
         if batch_size is None:
@@ -210,21 +212,20 @@ class Qwen3EmbeddingEncoder:
 
         # Process in batches
         all_embeddings = []
-        num_batches = (len(texts) + batch_size - 1) // batch_size
+        num_batches = (len(text_list) + batch_size - 1) // batch_size
 
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i + batch_size]
+        for i in range(0, len(text_list), batch_size):
+            batch_texts = text_list[i : i + batch_size]
             batch_num = i // batch_size + 1
 
             if show_progress:
-                logger.info(f"Processing batch {batch_num}/{num_batches} ({len(batch_texts)} texts)")
+                logger.info(
+                    f"Processing batch {batch_num}/{num_batches} ({len(batch_texts)} texts)"
+                )
 
-            try:
-                batch_embeddings = self._encode_batch(batch_texts)
-                all_embeddings.extend(batch_embeddings)
-            except Exception as e:
-                logger.error(f"Failed to encode batch {batch_num}: {e}")
-                raise RuntimeError(f"Failed to encode batch {batch_num}: {e}")
+            # Let exceptions propagate naturally
+            batch_embeddings = self._encode_batch(batch_texts)
+            all_embeddings.extend(batch_embeddings)
 
         # Return single embedding if single text input
         if is_single:
@@ -243,74 +244,66 @@ class Qwen3EmbeddingEncoder:
             List of numpy arrays, each of shape (1024,)
 
         Raises:
-            RuntimeError: If encoding fails
+            Exception: If encoding fails (propagates naturally)
         """
-        try:
-            # Tokenize with instruction prefix if specified
-            if self.instruction:
-                texts = [f"{self.instruction} {text}" for text in texts]
+        # Tokenize with instruction prefix if specified
+        if self.instruction:
+            texts = [f"{self.instruction} {text}" for text in texts]
 
-            # Tokenize
-            inputs = self.tokenizer(
-                texts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=self.max_length
-            )
+        # Tokenize
+        inputs = self.tokenizer(
+            texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.max_length,
+        )
 
-            # Move to device
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        # Move to device
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            # Generate embeddings (no gradient computation)
-            with torch.no_grad():
-                outputs = self.model(**inputs)
+        # Generate embeddings (no gradient computation)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
 
-                # Mean pooling on last_hidden_state
-                # Shape: (batch_size, seq_length, hidden_size)
-                last_hidden_state = outputs.last_hidden_state
+            # Mean pooling on last_hidden_state
+            # Shape: (batch_size, seq_length, hidden_size)
+            last_hidden_state = outputs.last_hidden_state
 
-                # Average over sequence length dimension
-                # Shape: (batch_size, hidden_size)
-                embeddings = last_hidden_state.mean(dim=1)
+            # Average over sequence length dimension
+            # Shape: (batch_size, hidden_size)
+            embeddings = last_hidden_state.mean(dim=1)
 
-                # L2 normalization if enabled
-                if self.normalize_embeddings:
-                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+            # L2 normalization if enabled
+            if self.normalize_embeddings:
+                embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
 
-                # Move to CPU and convert to numpy
-                embeddings = embeddings.cpu().numpy()
+            # Move to CPU and convert to numpy
+            embeddings = embeddings.cpu().numpy()
 
-            # Convert to list of 1D arrays
-            embedding_list = [embeddings[i] for i in range(embeddings.shape[0])]
+        # Convert to list of 1D arrays
+        embedding_list = [embeddings[i] for i in range(embeddings.shape[0])]
 
-            return embedding_list
+        return embedding_list
 
-        except Exception as e:
-            logger.error(f"Batch encoding failed: {e}")
-            raise RuntimeError(f"Batch encoding failed: {e}")
-
-    def get_embedding_dimension(self) -> int:
+    def get_provider_name(self) -> str:
         """
-        Get the embedding dimension for this model.
-
-        Dynamically determines dimension by encoding a test string on first call,
-        then caches the result. Works with any embedding model.
+        Get the provider name for logging and debugging.
 
         Returns:
-            Embedding dimension size (e.g., 1024 for Qwen3-Embedding-0.6B)
-        """
-        # Cache dimension from first encoding
-        if not hasattr(self, '_embedding_dim'):
-            test_embedding = self.encode(["test"], show_progress=False)[0]
-            self._embedding_dim = len(test_embedding)
+            Provider name string ("qwen3_local")
 
-        return self._embedding_dim
+        Example:
+            >>> provider = Qwen3EmbeddingProvider()
+            >>> provider.get_provider_name()
+            'qwen3_local'
+        """
+        return "qwen3_local"
 
     def __repr__(self) -> str:
-        """String representation of encoder."""
+        """String representation of provider."""
         return (
-            f"Qwen3EmbeddingEncoder("
+            f"Qwen3EmbeddingProvider("
             f"model={self.model_name}, "
             f"device={self.device}, "
             f"batch_size={self.batch_size}, "

@@ -78,7 +78,8 @@ Based on the retrieved information above, provide a comprehensive answer.
 The information is gathered from our medical knowledge base. And we are trying to answer the user's question as accurately as possible.
 If the retrieved information does not contain the answer, politely inform the user that you could not find relevant information. And ask them to rephrase or provide more details.
 
-Do not use markdown formatting in your answer. We are in a chat interface that does not support it.
-Use more conversational but still professional tone suitable for medical information.
-Do not expect the user to read long passages - summarize and synthesize the information effectively.
-They are also not medical professionals, so avoid jargon and explain concepts simply."""
+- Do NOT say "Based on the information you provided" or similar phrases. We collect the information from our knowledge base, not from the user.
+- Do NOT use markdown formatting in your answer (including ** **). We are in a chat interface that does not support it.
+- Use more conversational but still professional tone suitable for medical information.
+- Do not expect the user to read long passages - summarize and synthesize the information effectively.
+- Users are also not medical professionals, so avoid jargon and explain concepts simply."""
