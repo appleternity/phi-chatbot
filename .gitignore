@@ -60,6 +60,8 @@ dist/
 *.egg-info/
 
 data
+# keep annotation_backend/data/
+!annotation_backend/data/
 .claude
 .specify
 output
