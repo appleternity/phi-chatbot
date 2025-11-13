@@ -10,6 +10,7 @@ Auto-generated from all feature plans. Last updated: 2025-10-29
 - **Streaming**: httpx 0.27+ for async SSE streaming
 - **Authentication**: Bearer token with hmac constant-time comparison (stdlib)
 - **LLM Chunking**: OpenRouter API, Pydantic 2.x, Tiktoken, Typer CLI
+- PostgreSQL with pgvector + pg_trgm extensions (005-multi-query-keyword-search)
 
 ## Project Structure
 
@@ -304,17 +305,13 @@ docker-compose down -v
 **Run database migration**:
 
 ```bash
-# Create vector_chunks table and indexes
-python -m app.db.schema \
-  --host localhost \
-  --port 5432 \
-  --database medical_knowledge \
-  --user postgres \
-  --password postgres
+# Create vector_chunks table and indexes (reads defaults from .env)
+python -m src.db.schema_cli migrate
 
-# Or use environment variables from .env
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/medical_knowledge"
-python -m app.db.schema
+# Or override specific values
+python -m src.db.schema_cli migrate \
+  --database my_database \
+  --embedding-dim 1024
 ```
 
 **Verify database setup**:
@@ -438,14 +435,134 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 
 ## Recent Changes
 
+### CLI Tools Refactoring - Moved to src/ with .env Integration (2025-11-13)
+
+**Moved database CLI tools from app/ to src/ with automatic .env configuration loading**:
+
+- **Architecture Change**: Separated CLI commands from application code
+  - Moved CLI commands from `app/db/schema.py` to `src/db/schema_cli.py`
+  - Core schema functions remain in `app/db/schema.py` for application use
+  - Follows project convention: CLI tools in `src/`, application code in `app/`
+
+- **Improved User Experience**: Automatic configuration from .env
+  - Reads `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` from .env
+  - No need to specify connection parameters for every command
+  - Can still override any parameter via command-line flags
+
+- **New Command Path**: `python -m src.db.schema_cli` (was: `python -m app.db.schema`)
+  - `migrate`: Create database and schema
+  - `verify`: Verify schema setup
+  - `stats`: Display database statistics
+  - `enable-keyword-search`: Enable pg_trgm for keyword search
+  - `drop`: Drop all indexes and tables (destructive)
+
+**Examples**:
+```bash
+# Use defaults from .env
+python -m src.db.schema_cli migrate
+python -m src.db.schema_cli enable-keyword-search
+
+# Override specific values
+python -m src.db.schema_cli migrate --database my_db --embedding-dim 8192
+python -m src.db.schema_cli enable-keyword-search --table text-embedding-v4
+```
+
+**Files Modified**:
+  - `app/db/schema.py`: Removed CLI commands, kept core schema functions
+  - `CLAUDE.md`: Updated all command references
+
+**Files Created**:
+  - `src/db/schema_cli.py`: New CLI tool with .env integration
+  - `src/db/__init__.py`: Module initialization
+
+### Keyword Search Similarity Threshold Fix (005-multi-query-keyword-search, 2025-11-13)
+
+**Fixed keyword search returning 0 results due to pg_trgm default threshold being too high**:
+
+- **Root Cause**: Default `pg_trgm.similarity_threshold` of 0.3 was too high for short queries against long medical documents
+  - "aripiprazole" scored below 0.1 (no matches with 0.3 threshold)
+  - "aripiprazole mechanism of action" scored 0.1287 (below 0.3 threshold)
+  - Trigram similarity inherently produces low scores for short queries vs. long documents
+
+- **Solution**: Configurable similarity threshold with reasonable default (0.1)
+  - Added `keyword_similarity_threshold: float = 0.1` to config.py
+  - Changed SQL from `WHERE chunk_text % $1` (uses pg_trgm's 0.3) to `WHERE similarity(chunk_text, $1) > $2` (uses custom threshold)
+  - Created GIN index on correct table (`text-embedding-v4`)
+
+- **Threshold Tuning Guidance**:
+  - 0.05: More results, more noise
+  - 0.1: Balanced - recommended for medical terminology (default)
+  - 0.15: Fewer results, higher precision
+
+- **Expected Behavior**:
+  - Multi-word queries work well: "aripiprazole mechanism of action" → 4 matches
+  - Single-word queries may score too low: "aripiprazole" → 0 matches (expected for trigram similarity)
+  - Use multi-word queries for better keyword matching results
+
+**Files Modified**:
+  - `app/config.py`: Added `keyword_similarity_threshold` configuration parameter
+  - `app/retrieval/advanced.py`: Updated `_keyword_search()` to use custom threshold with `similarity()` function
+  - `app/db/schema.py`: Added `--table` parameter to `enable-keyword-search` command
+
+**Debugging Tools Created**:
+  - `debug_keyword_search.py`: Full diagnostic tool with --table parameter support
+  - `investigate_data.py`: Deep dive into similarity scores and threshold testing
+  - `fix_keyword_index.py`: Create GIN index on correct table
+  - `test_keyword_fix.py`: Test keyword search with various query patterns
+  - `KEYWORD_SEARCH_FIX.md`: Comprehensive fix documentation
+
+### Multi-Query Expansion and Hybrid Search (005-multi-query-keyword-search, 2025-11-13)
+
+**Added intelligent multi-query expansion and hybrid vector+keyword search**:
+
+- **Multi-Query Generation**: AdvancedRetriever now generates 1-10 diverse query variations using LLM
+  - Simple queries: 2-3 variations
+  - Comparative queries: 5-10 variations covering all entities
+  - Strategies: entity decomposition, aspect coverage, perspective variation
+  - Configuration: `max_queries` parameter (default: 10)
+
+- **Query Quality Control**: Automatic validation and deduplication
+  - Filters malformed queries (empty, punctuation-only)
+  - Removes exact duplicates (preserves order)
+  - Limits to max_queries threshold
+  - Structured logging: filtered count, duplicates count, final count
+
+- **Hybrid Vector+Keyword Search**: pg_trgm trigram-based keyword matching
+  - Vector search: HNSW index for semantic similarity
+  - Keyword search: GIN index with pg_trgm for lexical matching
+  - Parallel execution: asyncio.gather() for all queries
+  - Configuration: `ENABLE_KEYWORD_SEARCH` environment variable (default: false)
+  - Graceful degradation: Falls back to vector-only if pg_trgm missing
+
+- **Cross-Language Support**: Chinese→English translation in query expansion
+  - Accurate medical term translation (阿立哌唑 → aripiprazole)
+  - Preserves Latin/English terms in mixed queries (5-HT2A受体 → 5-HT2A receptor)
+  - Language detection logging: chinese, mixed_chinese_latin
+
+- **Database Migration**: New CLI command for pg_trgm setup
+  - Command: `python -m src.db.schema_cli enable-keyword-search`
+  - Creates: pg_trgm extension + GIN index on chunk_text
+  - Idempotent: Safe to run multiple times
+
+**Files Modified**:
+  - `app/retrieval/advanced.py`: Complete rewrite with multi-query + hybrid search
+  - `app/db/schema.py`: Added enable_keyword_search() migration function
+  - `app/config.py`: Added enable_keyword_search configuration parameter
+
+**Files Created**:
+  - `tests/integration/test_advanced_retriever.py`: Multi-query tests
+  - `tests/integration/test_keyword_search.py`: Hybrid search tests
+  - `tests/integration/test_cross_language.py`: Cross-language tests
+  - `tests/unit/test_query_validation.py`: Query validation unit tests
+
+- 005-multi-query-keyword-search: Added Python 3.11+
+
 ### API Bearer Authentication (2025-11-12)
 
 **Added secure Bearer token authentication for all API endpoints**:
 
 - **Security-first design**: Constant-time token comparison using `hmac.compare_digest`
 - **Strict validation**: 64+ hexadecimal characters (256-bit entropy minimum)
-- **Comprehensive logging**: Authentication events tracked without exposing token values
-- **Test coverage**: Contract, integration, unit, and concurrent auth tests
 
 **Configuration**:
   - `API_BEARER_TOKEN`: Required environment variable (validated at startup)
@@ -522,33 +639,27 @@ dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
 
 **Refactored RAG agent from tool-based to router-based architecture with intelligent classification**:
 
-- **Key Change**: RAG agent now uses 3-node router architecture instead of tool-based approach
   - **classify**: LLM-based intent classification ("retrieve" vs. "respond")
   - **retrieve**: Full RAG workflow (retrieve + format + generate)
   - **respond**: Direct response without retrieval (greetings, thank yous, etc.)
 
-- **Architecture Benefits**:
   - **Full State Access**: Retrieval node receives complete conversation state, not just string queries
   - **Type Safety**: Restores `List[BaseMessage]` interface for history-aware retrieval
   - **Intelligent Routing**: LLM classifies whether query needs knowledge base lookup
   - **Efficiency**: Skips unnecessary retrieval for conversational queries
 
-- **Implementation Details**:
   - `app/agents/rag_agent.py`: Complete rewrite with `create_rag_agent()` factory function
   - Classification uses low temperature (0.1) for consistent routing decisions
   - Generation uses higher temperature (1.0) for creative, natural responses
   - Conditional edges use state-based routing (`lambda state: state["__routing"]`)
 
-- **Deleted Components**:
   - `app/tools/medical_search.py`: Obsolete tool-based implementation removed
   - `app/tools/__init__.py`: Updated to reflect tool deletion
 
-- **Testing**:
   - Comprehensive test suite verified all routing paths work correctly
   - Fixed FakeChatModel classification with word boundary matching
   - Validated history-aware retrieval with multi-turn conversations
 
-- **Files Modified**:
   - Updated: `app/agents/rag_agent.py` (complete rewrite), `app/tools/__init__.py`
   - Deleted: `app/tools/medical_search.py`
   - Enhanced: `tests/fakes/fake_chat_model.py` (classification support, word boundaries)
@@ -557,25 +668,21 @@ dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
 
 **Simplified supervisor classification by removing unnecessary complexity**:
 
-- **Key Change**: Removed structured output with confidence scores and reasoning
   - Supervisor now returns plain text agent name instead of Pydantic model
   - Removed `AgentClassification` model with `reasoning` and `confidence` fields
   - Added `VALID_AGENTS` set for explicit validation
   - Kept stream events for frontend integration
 
-- **Benefits**:
   - **Simpler Implementation**: Easier to debug and maintain
   - **Faster Classification**: No structured output parsing overhead
   - **More Robust**: Explicit validation instead of schema enforcement
   - **Cleaner Logs**: No unnecessary metadata cluttering logs
 
-- **Implementation Details**:
   - `app/agents/supervisor.py`: Use `llm.invoke()` instead of `llm.with_structured_output()`
   - `app/utils/prompts.py`: Updated to request plain text output only
   - Validation logic explicitly checks against `VALID_AGENTS` set
   - Stream events preserved for routing:started and routing:complete
 
-- **Files Modified**:
   - Updated: `app/agents/supervisor.py`, `app/utils/prompts.py`
 
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
