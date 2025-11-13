@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from app.models import HealthResponse, ChatRequest, ChatResponse, ChatStreamRequest
 from app.config import settings
 from app.core.session_store import InMemorySessionStore, SessionStore, SessionData
@@ -20,6 +20,9 @@ from typing import Optional
 
 # Import streaming logic
 from app.api.streaming import stream_chat_events
+
+# Import authentication dependency and custom exception
+from app.core.auth.dependencies import verify_bearer_token, AuthenticationException
 
 # Configure logging
 logging.basicConfig(
@@ -46,6 +49,20 @@ async def lifespan(app: FastAPI):
     # ========================================================================
     # STARTUP
     # ========================================================================
+
+    # 0. Validate API Bearer Token (fail-fast if invalid)
+    logger.info("Validating API Bearer Token configuration...")
+    try:
+        token = settings.API_BEARER_TOKEN
+        # Token validation is handled by Pydantic validator in Settings class
+        # If we reach here, token passed validation (64+ hex chars)
+        logger.info(f"✅ API Bearer Token validated ({len(token)} characters)")
+    except Exception as e:
+        logger.error(f"❌ API Bearer Token validation failed: {e}")
+        logger.error(
+            "Generate a valid token using: openssl rand -hex 32"
+        )
+        raise
 
     # 1. Initialize session store
     logger.info("Initializing session store...")
@@ -123,7 +140,7 @@ async def lifespan(app: FastAPI):
         reranker = Qwen3Reranker(
             model_name=settings.RERANKER_MODEL,
             device="mps",
-            batch_size=1,
+            batch_size=4,  # Process 4 documents at a time to avoid MPS tensor size limits
         )
 
         if settings.PRELOAD_MODELS:
@@ -185,6 +202,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Custom exception handler for authentication errors
+# This returns the proper format: {'detail': '...', 'error_code': '...'}
+# instead of HTTPException's nested format: {'detail': {'detail': '...', 'error_code': '...'}}
+@app.exception_handler(AuthenticationException)
+async def authentication_exception_handler(request: Request, exc: AuthenticationException):
+    """Handle AuthenticationException and return flat error structure.
+
+    Args:
+        request: The incoming request
+        exc: The AuthenticationException with error details
+
+    Returns:
+        JSONResponse with 401 status and flat error structure
+    """
+    return JSONResponse(
+        status_code=401,
+        content=exc.error.model_dump(),
+    )
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -210,7 +246,8 @@ async def chat(
     request: ChatRequest,
     fastapi_request: Request,
     graph = Depends(get_graph),
-    session_store: SessionStore = Depends(get_session_store)
+    session_store: SessionStore = Depends(get_session_store),
+    token: str = Depends(verify_bearer_token)
 ):
     """Unified chat endpoint with streaming and non-streaming modes.
 

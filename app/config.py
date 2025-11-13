@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # Database table name for vector embeddings (supports A/B testing with multiple tables)
     table_name: str = "text-embedding-v4"
 
+    # API Authentication (001-api-bearer-auth)
+    API_BEARER_TOKEN: str
+
     @field_validator("embedding_provider")
     @classmethod
     def validate_embedding_provider(cls, v: str) -> str:
@@ -110,6 +113,51 @@ class Settings(BaseSettings):
         assert v in allowed_tables, \
             f"Invalid table name: '{v}'. " \
             f"Allowed tables: {', '.join(sorted(allowed_tables))}"
+
+        return v
+
+    @field_validator("API_BEARER_TOKEN")
+    @classmethod
+    def validate_api_bearer_token(cls, v: str) -> str:
+        """Validate API Bearer token format and security requirements.
+
+        Requirements:
+        - Must be at least 64 characters (256-bit entropy minimum)
+        - Must be hexadecimal format (0-9, a-f, A-F)
+        - Whitespace is stripped automatically
+
+        Args:
+            v: The token value from environment variable
+
+        Returns:
+            str: The validated and stripped token value
+
+        Raises:
+            ValueError: If token is empty, too short, or not hexadecimal
+        """
+        # Strip whitespace
+        v = v.strip()
+
+        # Check if empty after stripping
+        if not v:
+            raise ValueError(
+                "API_BEARER_TOKEN cannot be empty. "
+                "Generate using: openssl rand -hex 32"
+            )
+
+        # Check minimum length (64 hex chars = 256-bit entropy)
+        if len(v) < 64:
+            raise ValueError(
+                f"API_BEARER_TOKEN must be at least 64 hexadecimal characters "
+                f"(got {len(v)}). Generate using: openssl rand -hex 32"
+            )
+
+        # Validate hexadecimal format (case-insensitive)
+        if not all(c in "0123456789abcdefABCDEF" for c in v):
+            raise ValueError(
+                "API_BEARER_TOKEN must contain only hexadecimal characters "
+                "(0-9, a-f, A-F). Generate using: openssl rand -hex 32"
+            )
 
         return v
 

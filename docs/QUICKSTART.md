@@ -16,10 +16,19 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and add your OpenRouter API key:
+Edit `.env` and add your OpenRouter API key and API bearer token:
 ```
 OPENAI_API_KEY=your-key-here
+API_BEARER_TOKEN=your-secure-token-here
 ```
+
+**Generate API Bearer Token**:
+```bash
+# Generate a secure 128-character token
+openssl rand -hex 64
+```
+
+Copy the generated token and paste it as the value for `API_BEARER_TOKEN` in your `.env` file.
 
 ### 3. Pre-compute Embeddings (Required)
 
@@ -74,6 +83,9 @@ Startup time: **<1 second** (thanks to pre-computed embeddings!)
 
 **Option A: Web Browser**
 - Open http://localhost:8000/docs
+- Click the **Authorize** button (🔓 icon) at the top right
+- Enter your API token (from `.env` file): `Bearer your-api-token-here`
+- Click "Authorize" and close the dialog
 - Click "Try it out" on `/chat` endpoint
 - Use this request:
 ```json
@@ -86,9 +98,12 @@ Startup time: **<1 second** (thanks to pre-computed embeddings!)
 **Option B: Command Line**
 ```bash
 curl -X POST http://localhost:8000/chat \
+  -H "Authorization: Bearer your-api-token-here" \
   -H "Content-Type: application/json" \
   -d '{"session_id":"test-1","message":"What is Sertraline?"}'
 ```
+
+Replace `your-api-token-here` with your actual token from `.env`.
 
 **Option C: Python Script**
 ```bash
@@ -141,6 +156,22 @@ Make sure server is running:
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
+
+### Authentication errors (401 Unauthorized)
+**Error**: `{"detail": "Missing Authorization header"}`
+- Make sure you include the `Authorization: Bearer <token>` header in your requests
+- For Swagger UI: Click the Authorize button and enter your token
+- For curl: Add `-H "Authorization: Bearer your-token-here"`
+
+**Error**: `{"detail": "Invalid token format"}`
+- Token must be at least 64 hexadecimal characters
+- Regenerate token: `openssl rand -hex 32`
+- Update `.env` file with new token and restart server
+
+**Error**: `{"detail": "Field required"}` at startup
+- `API_BEARER_TOKEN` is missing from `.env` file
+- Generate token: `openssl rand -hex 32`
+- Add to `.env`: `API_BEARER_TOKEN=your-generated-token`
 
 ### LLM errors
 Check your `.env` file has correct `OPENAI_API_KEY`
