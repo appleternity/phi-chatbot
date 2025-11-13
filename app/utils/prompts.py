@@ -14,12 +14,7 @@ Analyze the user's message and determine which agent should handle their convers
 
 User message: {message}
 
-Respond in JSON format with exactly these fields:
-- "agent": must be exactly "emotional_support" or "rag_agent"
-- "reasoning": brief explanation of why this agent was chosen
-- "confidence": a number between 0.0 and 1.0 indicating confidence in classification
-
-Classify the user's intent and provide your reasoning. Be confident in your classification."""
+Respond with ONLY the agent name: either "emotional_support" or "rag_agent". No explanation needed."""
 
 EMOTIONAL_SUPPORT_PROMPT = """You are a compassionate mental health support companion.
 
