@@ -93,7 +93,7 @@ async def chat_stream(user_data: UserMessage,
     if user_data:
         print(f"[User {user_id}] to [{user_data.bot_id}]: {user_data.message}")
 
-    # If there’s an ongoing stream for this user, cancel it
+    # If there's an ongoing stream for this user, cancel it
     if user_id in cancel_events:
         cancel_events[user_id].set()
 
@@ -113,17 +113,35 @@ async def chat_stream(user_data: UserMessage,
     if not OPENROUTER_API_KEY:
         return BotResponse(response="Error: Missing OpenRouter API key.", message_id=str(uuid4()))
 
+    # Get history
+    chat_history = (
+        db.query(Message)
+        .filter(Message.user_id == user_id, Message.bot_id == user_data.bot_id)
+        .order_by(Message.created_at.desc())
+        .limit(5+1) # include the current user message
+        .all()
+    )
+    chat_history = list(reversed(chat_history))  # Get chronological order (oldest to newest)
+
     system_prompt = BOT_PROMPTS[user_data.bot_id]
+
+    # Build messages array with history
+    messages = [
+        {"role": "system", "content": system_prompt},
+    ]
+    for msg in chat_history:
+        if msg.sender == "user":
+            messages.append({"role": "user", "content": msg.text})
+        elif msg.sender == "bot":
+            messages.append({"role": "assistant", "content": msg.text})
+
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
     payload = {
         "model": settings.DEFAULT_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_data.message},
-        ],
+        "messages": messages,
         "stream": True,
     }
 
