@@ -7,13 +7,11 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END
 from langgraph.types import Command
 
-from app.agents.base import create_llm
 from app.graph.state import MedicalChatState
+from app.llm import response_llm
 from app.utils.prompts import EMOTIONAL_SUPPORT_PROMPT
 
 logger = logging.getLogger(__name__)
-
-llm = create_llm(temperature=1.0)
 
 
 async def emotional_support_node(state: MedicalChatState) -> Command[Literal[END]]:
@@ -46,7 +44,7 @@ async def emotional_support_node(state: MedicalChatState) -> Command[Literal[END
     logger.debug(f"Session {state['session_id']}: Emotional support agent responding")
 
     # Generate response (async invocation for proper streaming with astream_events)
-    response = await llm.ainvoke(messages)
+    response = await response_llm.ainvoke(messages)
 
     # Return command with response
     return Command(goto=END, update={"messages": [response]})

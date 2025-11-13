@@ -12,7 +12,7 @@ from app.db.connection import DatabasePool
 from app.retrieval.utils import extract_retrieval_query, format_conversation_context
 from app.embeddings import EmbeddingProvider
 from app.core.qwen3_reranker import Qwen3Reranker
-from app.agents.base import create_llm
+from app.llm import internal_llm
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,6 @@ class AdvancedRetriever:
         self.encoder = encoder
         self.reranker = reranker
         self.table_name = table_name
-        self.llm = create_llm(temperature=1.0, disable_streaming=True, tags=["internal-llm"])
 
         logger.info(f"AdvancedRetriever initialized (table={table_name}, query expansion + reranking)")
 
@@ -136,7 +135,7 @@ CONTEXTUAL: <variation>
 Now generate variations:"""
 
         # Generate variations with LLM
-        response = self.llm.invoke([{"role": "user", "content": expansion_prompt}])
+        response = internal_llm.invoke([{"role": "user", "content": expansion_prompt}])
         response_text = response.content
 
         # Parse response

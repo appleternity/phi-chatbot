@@ -6,9 +6,9 @@ from typing import Literal
 from langgraph.config import get_stream_writer
 from langgraph.types import Command
 
-from app.agents.base import create_llm
 from app.config import settings
 from app.graph.state import MedicalChatState
+from app.llm import response_llm, internal_llm
 from app.utils.prompts import SUPERVISOR_PROMPT
 from app.utils.text_utils import normalize_llm_output
 
@@ -19,10 +19,6 @@ VALID_AGENTS: set[Literal["emotional_support", "rag_agent"]] = {
     "emotional_support",
     "rag_agent",
 }
-
-
-# Initialize LLM with low temperature for consistent classification
-llm = create_llm(temperature=0.1)
 
 
 def supervisor_node(
@@ -55,7 +51,7 @@ def supervisor_node(
     last_message = state["messages"][-1]
 
     # Invoke LLM for classification (plain string output)
-    response = llm.invoke(SUPERVISOR_PROMPT.format(message=last_message.content))
+    response = internal_llm.invoke(SUPERVISOR_PROMPT.format(message=last_message.content))
     agent_name = normalize_llm_output(response.content)
 
     # Validate agent name
