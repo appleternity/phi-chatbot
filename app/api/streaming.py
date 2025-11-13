@@ -117,13 +117,14 @@ async def stream_chat_events(
         stream_iter = graph.astream(
             state,
             config=config,
-            stream_mode=["messages", "custom"]
+            stream_mode=["messages", "custom"],
+            subgraphs=True,
         ).__aiter__()
         try:
             while True:
                 try:
                     # Enforce idle-timeout while awaiting the next chunk; handler work is unrestricted
-                    mode, chunk = await asyncio.wait_for(
+                    *ns, mode, chunk = await asyncio.wait_for(
                         stream_iter.__anext__(),
                         timeout=idle_timeout_seconds
                     )
@@ -147,6 +148,8 @@ async def stream_chat_events(
                 elif mode == "messages":
                     # chunk is a tuple: (message, metadata)
                     message_chunk, metadata = chunk
+                    # Debug: log namespace and metadata to understand nested graph structure
+                    logger.debug(f"Message event - ns={ns}, node={metadata.get('langgraph_node')}, tags={metadata.get('tags')}")
                     async for sse_event in model_handler.handle_message(message_chunk, metadata, session):
                         yield sse_event.to_sse_format()
                         events_emitted += 1

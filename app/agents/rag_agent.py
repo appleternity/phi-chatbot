@@ -16,7 +16,12 @@ from app.agents.base import create_llm
 from app.config import settings
 from app.graph.state import MedicalChatState
 from app.retrieval import AdvancedRetriever, RerankRetriever, SimpleRetriever
-from app.utils.prompts import RAG_AGENT_PROMPT, RAG_CONTEXT_TEMPLATE
+from app.utils.prompts import (
+    RAG_AGENT_PROMPT,
+    RAG_CLASSIFICATION_PROMPT,
+    RAG_CONTEXT_TEMPLATE,
+    RAG_CONVERSATIONAL_TEMPLATE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +103,7 @@ def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetr
         Compiled StateGraph ready for integration
     """
     # Create LLMs
-    llm_classify = create_llm(temperature=0.1)  # Low temp for consistent classification
+    llm_classify = create_llm(temperature=0.1, disable_streaming=True, tags=["internal-llm"])  # Low temp for consistent classification
     llm_generate = create_llm(temperature=1.0)  # Higher temp for creative responses
 
     async def classify_intent(state: MedicalChatState) -> dict:
@@ -117,18 +122,10 @@ def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetr
         last_message = state["messages"][-1]
         session_id = state["session_id"]
 
-        classification_prompt = f"""Classify this user message into one category:
+        # Use classification prompt from centralized prompts module
+        prompt = RAG_CLASSIFICATION_PROMPT.format(message=last_message.content)
 
-User message: "{last_message.content}"
-
-Categories:
-- retrieve: Medical/clinical question requiring knowledge base (medications, treatments, conditions, side effects)
-- respond: Greeting, thank you, clarification, summary, or general conversation
-
-Respond with ONLY one word: "retrieve" or "respond"
-"""
-
-        response = await llm_classify.ainvoke([HumanMessage(content=classification_prompt)])
+        response = await llm_classify.ainvoke([HumanMessage(content=prompt)])
         intent = response.content.strip().lower()
 
         # Validate and default to retrieve if unclear
@@ -192,7 +189,7 @@ Respond with ONLY one word: "retrieve" or "respond"
 
         # 3. Build prompt with retrieved context
         system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
-        context_msg = HumanMessage(
+        context_msg = AIMessage(
             content=RAG_CONTEXT_TEMPLATE.format(
                 formatted_docs=formatted_docs,
                 conversation_history=conversation_history,
@@ -231,11 +228,10 @@ Respond with ONLY one word: "retrieve" or "respond"
         # Build conversational prompt
         conversation_history = _format_conversation_history(state["messages"])
         system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
-        context_msg = HumanMessage(
-            content=f"""# Conversation History
-{conversation_history}
-
-Respond naturally to the user's message. No medical knowledge retrieval needed for this conversational query."""
+        context_msg = AIMessage(
+            content=RAG_CONVERSATIONAL_TEMPLATE.format(
+                conversation_history=conversation_history
+            )
         )
 
         # Generate conversational response
