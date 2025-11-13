@@ -10,6 +10,7 @@ from app.agents.base import create_llm
 from app.config import settings
 from app.graph.state import MedicalChatState
 from app.utils.prompts import SUPERVISOR_PROMPT
+from app.utils.text_utils import normalize_llm_output
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def supervisor_node(
 
     # Invoke LLM for classification (plain string output)
     response = llm.invoke(SUPERVISOR_PROMPT.format(message=last_message.content))
-    agent_name = response.content.strip()
+    agent_name = normalize_llm_output(response.content)
 
     # Validate agent name
     if agent_name not in VALID_AGENTS:

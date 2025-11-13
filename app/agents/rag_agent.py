@@ -22,6 +22,7 @@ from app.utils.prompts import (
     RAG_CONTEXT_TEMPLATE,
     RAG_CONVERSATIONAL_TEMPLATE,
 )
+from app.utils.text_utils import normalize_llm_output
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,7 @@ def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetr
         prompt = RAG_CLASSIFICATION_PROMPT.format(message=last_message.content)
 
         response = await llm_classify.ainvoke([HumanMessage(content=prompt)])
-        intent = response.content.strip().lower()
+        intent = normalize_llm_output(response.content)
 
         # Validate and default to retrieve if unclear
         if intent not in ["retrieve", "respond"]:
