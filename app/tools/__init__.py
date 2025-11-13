@@ -1,5 +1,6 @@
 """Tools for LangGraph agents."""
 
-from app.tools.medical_search import create_medical_search_tool
+# No tools currently defined
+# Tools were replaced with router-based architecture for better state access
 
-__all__ = ["create_medical_search_tool"]
+__all__ = []

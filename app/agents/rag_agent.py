@@ -1,97 +1,269 @@
 """RAG agent for medical information retrieval.
 
-Tool-based architecture: LLM decides when to retrieve from knowledge base.
+Router-based architecture: Classify intent → Route to retrieval or direct response.
+Restores history-aware retrieval with minimal changes to original implementation.
 """
 
 import logging
-from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.prebuilt import ToolNode
-from langchain_core.messages import SystemMessage
-from app.retrieval import SimpleRetriever, RerankRetriever, AdvancedRetriever
+from typing import Literal
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.config import get_stream_writer
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Command
+
 from app.agents.base import create_llm
-from app.utils.prompts import RAG_AGENT_PROMPT
-from app.tools.medical_search import create_medical_search_tool
+from app.config import settings
+from app.graph.state import MedicalChatState
+from app.retrieval import AdvancedRetriever, RerankRetriever, SimpleRetriever
+from app.utils.prompts import RAG_AGENT_PROMPT, RAG_CONTEXT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
 
-def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetriever):
-    """Factory function to create RAG agent with tool-based retrieval.
+def _format_retrieved_documents(docs: list[dict]) -> str:
+    """Format retrieved documents for LLM consumption.
 
-    The agent uses a StateGraph pattern where the LLM can decide whether to:
-    1. Call the medical_search tool to retrieve information
-    2. Respond directly without retrieval (for greetings, clarifications, etc.)
+    This formatting is necessary to provide clear structure and source attribution
+    for the LLM to generate accurate responses.
 
     Args:
-        retriever: Document retriever instance (non-serializable)
+        docs: List of retrieved document dictionaries
 
     Returns:
-        Compiled LangGraph agent ready for invocation
+        Markdown-formatted string with document information
     """
-    # Create LLM
-    llm = create_llm(temperature=1.0)
+    if not docs:
+        return "No relevant information found in the knowledge base."
 
-    # Create medical search tool with injected retriever
-    medical_search_tool = create_medical_search_tool(retriever)
-    tools = [medical_search_tool]
+    formatted = "# Retrieved Information\n\n"
+    for i, doc in enumerate(docs, 1):
+        # Build a breadcrumb for the source, filtering out empty parts
+        source_parts = [
+            doc.get("source_document"),
+            doc.get("chapter_title"),
+            doc.get("section_title"),
+            doc.get("subsection_title"),
+        ]
+        source_path = " > ".join(filter(None, source_parts))
+        if not source_path:
+            source_path = "Unknown Source"
 
-    # Bind tools to LLM
-    llm_with_tools = llm.bind_tools(tools)
+        formatted += f"## Source {i}: {source_path}\n\n"
+        formatted += f"### Content:\n{doc.get('chunk_text', 'No content.')}\n\n"
+        formatted += "---\n\n"
 
-    # Create tool node for executing tool calls
-    tool_node = ToolNode(tools)
+    return formatted
 
-    async def call_model(state: MessagesState):
-        """Call LLM with tools bound.
 
-        The LLM will decide whether to call medical_search tool or respond directly.
-        """
-        messages = state["messages"]
+def _format_conversation_history(messages) -> str:
+    """Format conversation history for LLM context, excluding system messages.
 
-        # Add system message if not present
-        if not any(isinstance(msg, SystemMessage) for msg in messages):
-            messages = [SystemMessage(content=RAG_AGENT_PROMPT)] + list(messages)
+    Args:
+        messages: List of message objects from the conversation.
 
-        logger.debug(f"Calling LLM with {len(messages)} messages")
-        response = await llm_with_tools.ainvoke(messages)
+    Returns:
+        Formatted string of conversation history with roles.
+    """
+    if not messages:
+        return "No prior messages available."
 
-        return {"messages": [response]}
+    formatted_parts = []
+    for message in messages:
+        if isinstance(message, SystemMessage):
+            continue  # Skip system messages
+        elif isinstance(message, HumanMessage):
+            role = "User"
+        elif isinstance(message, AIMessage):
+            role = "Assistant"
+        else:
+            role = "Unknown"
+        formatted_parts.append(f"{role}: {message.content}")
 
-    def should_continue(state: MessagesState):
-        """Determine if we should continue to tools or end.
+    return "\n".join(formatted_parts)
+
+
+def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetriever):
+    """Factory function to create router-based RAG agent with classification.
+
+    Architecture:
+    - classify_intent: Determine if retrieval needed (medical query vs. greeting)
+    - rag_agent_node: Retrieve + generate (medical queries)
+    - generate_without_retrieval: Direct response (greetings, clarifications)
+
+    Args:
+        retriever: Document retriever instance (injected via closure)
+
+    Returns:
+        Compiled StateGraph ready for integration
+    """
+    # Create LLMs
+    llm_classify = create_llm(temperature=0.1)  # Low temp for consistent classification
+    llm_generate = create_llm(temperature=1.0)  # Higher temp for creative responses
+
+    async def classify_intent(state: MedicalChatState) -> dict:
+        """Classify user intent to route to retrieval or direct response.
+
+        Determines if the user's message requires:
+        - "retrieve": Medical/clinical question needing knowledge base lookup
+        - "respond": Greeting, clarification, summary, or conversational query
+
+        Args:
+            state: Current graph state with conversation messages
 
         Returns:
-            "tools" if there are tool calls to execute, END otherwise
+            State update with routing decision
         """
-        messages = state["messages"]
-        last_message = messages[-1]
+        last_message = state["messages"][-1]
+        session_id = state["session_id"]
 
-        # Check if LLM made tool calls
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-            logger.debug(f"Tool calls detected: {len(last_message.tool_calls)}")
-            return "tools"
+        classification_prompt = f"""Classify this user message into one category:
 
-        logger.debug("No tool calls, ending conversation")
-        return END
+User message: "{last_message.content}"
+
+Categories:
+- retrieve: Medical/clinical question requiring knowledge base (medications, treatments, conditions, side effects)
+- respond: Greeting, thank you, clarification, summary, or general conversation
+
+Respond with ONLY one word: "retrieve" or "respond"
+"""
+
+        response = await llm_classify.ainvoke([HumanMessage(content=classification_prompt)])
+        intent = response.content.strip().lower()
+
+        # Validate and default to retrieve if unclear
+        if intent not in ["retrieve", "respond"]:
+            logger.warning(
+                f"Session {session_id}: Invalid classification '{intent}', defaulting to 'retrieve'"
+            )
+            intent = "retrieve"
+
+        logger.info(f"Session {session_id}: Classified intent as '{intent}'")
+
+        return {"__routing": intent}
+
+    async def rag_agent_node(state: MedicalChatState) -> Command[Literal[END]]:
+        """RAG agent - retrieve from knowledge base and synthesize answer.
+
+        Flow: Extract query → Search KB with full history → Synthesize answer
+
+        Emits stage events:
+        - retrieval:started - When starting document search
+        - retrieval:complete - After retrieving documents
+        - generation:started - Before LLM synthesis
+
+        Args:
+            state: Current graph state with messages and retriever
+
+        Returns:
+            Command with synthesized answer message
+        """
+        session_id = state["session_id"]
+
+        # Get stream writer for emitting stage events
+        writer = get_stream_writer()
+
+        # Emit retrieval started
+        writer({"type": "stage", "stage": "retrieval", "status": "started"})
+
+        # 1. Extract query and conversation history
+        last_message = state["messages"][-1]
+        conversation_history = _format_conversation_history(state["messages"])
+        query = last_message.content
+        logger.debug(f"Session {session_id}: RAG query: {query}")
+
+        # 2. Search knowledge base with full conversation context
+        # Retrievers extract appropriate history based on their strategy:
+        # - SimpleRetriever: last message only (max_history=1)
+        # - RerankRetriever: last message only (max_history=1)
+        # - AdvancedRetriever: last 5 messages for query expansion (max_history=5)
+        docs = await retriever.search(
+            state["messages"],  # ✅ Pass full message history for context-aware retrieval
+            top_k=settings.top_k_documents,
+        )
+        formatted_docs = _format_retrieved_documents(docs)
+        logger.debug(f"Session {session_id}: Retrieved {len(docs)} documents")
+
+        # Emit retrieval complete
+        writer({"type": "stage", "stage": "retrieval", "status": "complete"})
+
+        # Emit generation started
+        writer({"type": "stage", "stage": "generation", "status": "started"})
+
+        # 3. Build prompt with retrieved context
+        system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
+        context_msg = HumanMessage(
+            content=RAG_CONTEXT_TEMPLATE.format(
+                formatted_docs=formatted_docs,
+                conversation_history=conversation_history,
+                query=query,
+            )
+        )
+
+        # 4. Single LLM call to synthesize answer
+        response = await llm_generate.ainvoke([system_msg, context_msg])
+
+        logger.info(f"Session {session_id}: Generated response with retrieval")
+        return Command(goto=END, update={"messages": [response]})
+
+    async def generate_without_retrieval(state: MedicalChatState) -> Command[Literal[END]]:
+        """Generate direct response without retrieval for conversational queries.
+
+        Handles greetings, clarifications, thank yous, and other non-medical queries
+        that don't require knowledge base lookup.
+
+        Args:
+            state: Current graph state with conversation messages
+
+        Returns:
+            Command with conversational response message
+        """
+        session_id = state["session_id"]
+
+        # Get stream writer for emitting stage events
+        writer = get_stream_writer()
+
+        # Emit generation started (no retrieval)
+        writer({"type": "stage", "stage": "generation", "status": "started"})
+
+        logger.info(f"Session {session_id}: Generating direct response (no retrieval)")
+
+        # Build conversational prompt
+        conversation_history = _format_conversation_history(state["messages"])
+        system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
+        context_msg = HumanMessage(
+            content=f"""# Conversation History
+{conversation_history}
+
+Respond naturally to the user's message. No medical knowledge retrieval needed for this conversational query."""
+        )
+
+        # Generate conversational response
+        response = await llm_generate.ainvoke([system_msg, context_msg])
+
+        logger.info(f"Session {session_id}: Generated response without retrieval")
+        return Command(goto=END, update={"messages": [response]})
 
     # Build the graph
-    builder = StateGraph(MessagesState)
+    builder = StateGraph(MedicalChatState)
 
     # Add nodes
-    builder.add_node("agent", call_model)
-    builder.add_node("tools", tool_node)
+    builder.add_node("classify", classify_intent)
+    builder.add_node("retrieve", rag_agent_node)
+    builder.add_node("respond", generate_without_retrieval)
 
     # Add edges
-    builder.add_edge(START, "agent")
+    builder.add_edge(START, "classify")
     builder.add_conditional_edges(
-        "agent",
-        should_continue,
-        ["tools", END]
+        "classify",
+        lambda state: state["__routing"],  # Read routing decision from state
+        ["retrieve", "respond"],
     )
-    builder.add_edge("tools", "agent")
+    builder.add_edge("retrieve", END)
+    builder.add_edge("respond", END)
 
     # Compile and return
     graph = builder.compile()
-    logger.info("RAG agent compiled successfully")
+    logger.info("Router-based RAG agent compiled successfully")
 
     return graph

@@ -210,7 +210,7 @@ Analyze the user's message and determine which agent should handle their convers
 
 User message: {message}
 
-Classify the user's intent and provide your reasoning."""
+Respond with ONLY the agent name: either "emotional_support" or "rag_agent". No explanation needed."""
 
 def supervisor_node(state: MedicalChatState) -> Command[Literal["emotional_support", "rag_agent"]]:
     """監督代理，分類使用者意圖並指派適當的代理。
@@ -220,25 +220,21 @@ def supervisor_node(state: MedicalChatState) -> Command[Literal["emotional_suppo
     # 取得最後一則使用者訊息
     last_message = state["messages"][-1]
 
-    # 使用結構化輸出進行分類
-    classification = llm.with_structured_output(AgentClassification).invoke(
-        SUPERVISOR_PROMPT.format(message=last_message.content)
-    )
+    # 調用 LLM 進行分類（純文字輸出）
+    response = llm.invoke(SUPERVISOR_PROMPT.format(message=last_message.content))
+    agent_name = response.content.strip()
+
+    # 驗證代理名稱
+    if agent_name not in {"emotional_support", "rag_agent"}:
+        raise ValueError(f"Invalid agent classification: '{agent_name}'")
 
     # 記錄分類（對除錯很有用）
-    print(f"Supervisor classification: {classification.agent} (confidence: {classification.confidence:.2f})")
-    print(f"Reasoning: {classification.reasoning}")
+    print(f"Supervisor classification: {agent_name}")
 
     # 回傳包含指派代理的命令
     return Command(
-        goto=classification.agent,
-        update={
-            "assigned_agent": classification.agent,
-            "metadata": {
-                "classification_reasoning": classification.reasoning,
-                "classification_confidence": classification.confidence
-            }
-        }
+        goto=agent_name,
+        update={"assigned_agent": agent_name}
     )
 ```
 

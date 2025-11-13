@@ -1,7 +1,6 @@
 """Supervisor agent for intent classification and routing."""
 
 from typing import Literal
-from pydantic import BaseModel, Field
 from langgraph.types import Command
 from app.graph.state import MedicalChatState
 from app.agents.base import create_llm
@@ -11,17 +10,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
-class AgentClassification(BaseModel):
-    """Structured output for agent classification."""
-
-    agent: Literal["emotional_support", "rag_agent"] = Field(
-        description="The agent to assign based on user intent"
-    )
-    reasoning: str = Field(description="Brief explanation of why this agent was chosen")
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence in classification (0-1)"
-    )
+# Valid agent names
+VALID_AGENTS: set[Literal["emotional_support", "rag_agent"]] = {
+    "emotional_support",
+    "rag_agent",
+}
 
 
 # Initialize LLM with low temperature for consistent classification
@@ -40,30 +33,33 @@ def supervisor_node(
 
     Returns:
         Command with assigned agent name (one of: emotional_support, rag_agent)
+
+    Raises:
+        ValueError: If LLM returns invalid agent name
     """
     # Get the last user message
     last_message = state["messages"][-1]
 
-    # Classify with structured output
-    classification = llm.with_structured_output(AgentClassification).invoke(
-        SUPERVISOR_PROMPT.format(message=last_message.content)
-    )
+    # Invoke LLM for classification (plain string output)
+    response = llm.invoke(SUPERVISOR_PROMPT.format(message=last_message.content))
+    agent_name = response.content.strip()
+
+    # Validate agent name
+    if agent_name not in VALID_AGENTS:
+        logger.error(
+            f"Session {state['session_id']}: Invalid agent '{agent_name}' returned by supervisor. "
+            f"Expected one of: {VALID_AGENTS}"
+        )
+        raise ValueError(
+            f"Invalid agent classification: '{agent_name}'. "
+            f"Must be one of: {', '.join(VALID_AGENTS)}"
+        )
 
     # Log classification
-    logger.info(
-        f"Session {state['session_id']}: Classified as {classification.agent} "
-        f"(confidence: {classification.confidence:.2f})"
-    )
-    logger.debug(f"Classification reasoning: {classification.reasoning}")
+    logger.info(f"Session {state['session_id']}: Classified as '{agent_name}'")
 
     # Return command with assigned agent
     return Command(
-        goto=classification.agent,
-        update={
-            "assigned_agent": classification.agent,
-            "metadata": {
-                "classification_reasoning": classification.reasoning,
-                "classification_confidence": classification.confidence,
-            },
-        },
+        goto=agent_name,
+        update={"assigned_agent": agent_name},
     )

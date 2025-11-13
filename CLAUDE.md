@@ -357,6 +357,41 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 - 003-sse-streaming: Added Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming
 - 002-semantic-search: Added Python 3.11+ + ransformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI
 
+### Router-Based RAG Architecture - Classification and Routing (2025-11-13)
+
+**Refactored RAG agent from tool-based to router-based architecture with intelligent classification**:
+
+- **Key Change**: RAG agent now uses 3-node router architecture instead of tool-based approach
+  - **classify**: LLM-based intent classification ("retrieve" vs. "respond")
+  - **retrieve**: Full RAG workflow (retrieve + format + generate)
+  - **respond**: Direct response without retrieval (greetings, thank yous, etc.)
+
+- **Architecture Benefits**:
+  - **Full State Access**: Retrieval node receives complete conversation state, not just string queries
+  - **Type Safety**: Restores `List[BaseMessage]` interface for history-aware retrieval
+  - **Intelligent Routing**: LLM classifies whether query needs knowledge base lookup
+  - **Efficiency**: Skips unnecessary retrieval for conversational queries
+
+- **Implementation Details**:
+  - `app/agents/rag_agent.py`: Complete rewrite with `create_rag_agent()` factory function
+  - Classification uses low temperature (0.1) for consistent routing decisions
+  - Generation uses higher temperature (1.0) for creative, natural responses
+  - Conditional edges use state-based routing (`lambda state: state["__routing"]`)
+
+- **Deleted Components**:
+  - `app/tools/medical_search.py`: Obsolete tool-based implementation removed
+  - `app/tools/__init__.py`: Updated to reflect tool deletion
+
+- **Testing**:
+  - Comprehensive test suite verified all routing paths work correctly
+  - Fixed FakeChatModel classification with word boundary matching
+  - Validated history-aware retrieval with multi-turn conversations
+
+- **Files Modified**:
+  - Updated: `app/agents/rag_agent.py` (complete rewrite), `app/tools/__init__.py`
+  - Deleted: `app/tools/medical_search.py`
+  - Enhanced: `tests/fakes/fake_chat_model.py` (classification support, word boundaries)
+
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
 
 **Enhanced retriever interface to accept conversation history for context-aware retrieval**:

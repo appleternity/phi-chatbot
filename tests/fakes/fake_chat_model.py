@@ -43,60 +43,125 @@ class FakeChatModel(BaseChatModel):
 
         last_message = messages[-1].content.lower() if hasattr(messages[-1], 'content') else ""
 
-        # Check if this is a structured output request (supervisor classification)
-        # Supervisor prompt includes: "supervisor", "classify", "agent", "JSON format"
-        # Check all messages combined for these patterns
+        # Check if this is a classification request
+        # Patterns:
+        # 1. Supervisor: "supervisor", "agent", "emotional_support or rag_agent"
+        # 2. RAG classification: "classify", "categories", "retrieve or respond"
         all_content = " ".join(str(msg.content).lower() for msg in messages if hasattr(msg, 'content'))
-        is_structured = (("supervisor" in all_content or "classify" in all_content) and
-                        "agent" in all_content)
+        is_supervisor_classification = (("supervisor" in all_content or "agent" in all_content) and
+                                        ("emotional_support" in all_content or "rag_agent" in all_content))
+        is_rag_classification = ("classify" in all_content and "categories" in all_content and
+                                 ("retrieve" in all_content or "respond" in all_content))
 
-        if is_structured:
-            # Supervisor classification - return JSON for structured output
+        if is_supervisor_classification:
+            # Supervisor classification - return PLAIN TEXT (emotional_support or rag_agent)
             # Extract the actual user message from the supervisor prompt
-            # Format: "...User message: <actual message>\n\nRespond in JSON format..."
+            # Format: "...User message: <actual message>\n\nRespond with ONLY..."
             import re
-            user_msg_match = re.search(r'user message:\s*(.+?)\s*(?:respond in json|$)', last_message, re.IGNORECASE | re.DOTALL)
+            user_msg_match = re.search(r'user message:\s*(.+?)(?:\s*respond with only|$)', last_message, re.IGNORECASE | re.DOTALL)
             actual_message = user_msg_match.group(1).strip() if user_msg_match else last_message
 
             # Check for emotional support keywords
             emotional_keywords = ["anxious", "feeling", "depressed", "sad", "stressed", "worried", "emotional",
                                  "upset", "down", "struggling", "need to talk", "need someone"]
 
-            # Check for parenting keywords
-            parenting_keywords = ["child", "toddler", "baby", "infant", "kid", "son", "daughter",
-                                 "parenting", "tantrum", "sleep training", "potty", "behavior",
-                                 "year old", "months old", "developmental"]
-
             # Check for medical/RAG keywords
             medical_keywords = ["medication", "drug", "medicine", "treatment", "dose", "dosage",
                                "side effect", "prescription", "antidepressant", "ssri", "what is"]
 
+            # Return PLAIN TEXT agent name
             if any(keyword in actual_message for keyword in emotional_keywords):
-                response_data = {
-                    "agent": "emotional_support",
-                    "reasoning": "User expressing emotional distress requiring empathetic support",
-                    "confidence": 0.92
-                }
-            elif any(keyword in actual_message for keyword in parenting_keywords):
-                response_data = {
-                    "agent": "parenting",
-                    "reasoning": "User asking about parenting or child development",
-                    "confidence": 0.93
-                }
+                agent_name = "emotional_support"
             elif any(keyword in actual_message for keyword in medical_keywords):
-                response_data = {
-                    "agent": "rag_agent",
-                    "reasoning": "Medical information query requiring factual response",
-                    "confidence": 0.95
-                }
+                agent_name = "rag_agent"
             else:
                 # Default to RAG agent for generic or medical queries
-                response_data = {
-                    "agent": "rag_agent",
-                    "reasoning": "General query defaulting to medical information agent",
-                    "confidence": 0.85
-                }
-            response = AIMessage(content=json.dumps(response_data))
+                agent_name = "rag_agent"
+
+            response = AIMessage(content=agent_name)
+
+        elif is_rag_classification:
+            # RAG classification - return "retrieve" or "respond"
+            # Extract the actual user message from the classification prompt
+            import re
+            user_msg_match = re.search(r'user message:\s*"(.+?)"', last_message, re.IGNORECASE | re.DOTALL)
+            actual_message = user_msg_match.group(1).strip() if user_msg_match else last_message
+
+            # Check for greeting/conversational keywords
+            greeting_keywords = ["thank", "thanks", "hello", "hi", "hey", "goodbye", "bye"]
+
+            # Check for medical keywords
+            medical_keywords = ["medication", "drug", "medicine", "treatment", "dose", "dosage",
+                               "side effect", "prescription", "antidepressant", "ssri", "what is",
+                               "how does", "tell me about", "aripiprazole", "sertraline", "lexapro"]
+
+            # Classify (case-insensitive matching with word boundaries)
+            actual_message_lower = actual_message.lower()
+
+            # Use word boundary matching to avoid false positives (e.g., "hi" in "children")
+            import re as regex_module
+            matched_greeting = any(
+                regex_module.search(r'\b' + re.escape(keyword) + r'\b', actual_message_lower)
+                for keyword in greeting_keywords
+            )
+            matched_medical = any(keyword in actual_message_lower for keyword in medical_keywords)
+
+            if matched_greeting:
+                classification = "respond"
+            elif matched_medical:
+                classification = "retrieve"
+            else:
+                # Default to retrieve for safety
+                classification = "retrieve"
+
+            response = AIMessage(content=classification)
+
+        # Check if this is RAG/medical context (includes retrieved information)
+        # IMPORTANT: This must come BEFORE emotional support check!
+        elif any("retrieved information" in str(msg.content).lower() or
+                 "based on the retrieved information" in str(msg.content).lower() or
+                 "conversation context" in str(msg.content).lower() or
+                 "user question" in str(msg.content).lower()
+                 for msg in messages if hasattr(msg, 'content')):
+            # RAG agent responses - simulate retrieval-augmented generation
+            # Check what the query is about by looking at all messages
+            all_msg_content = " ".join(str(msg.content).lower() for msg in messages if hasattr(msg, 'content'))
+
+            if "sertraline" in all_msg_content or "zoloft" in all_msg_content:
+                response = AIMessage(
+                    content="Based on the medical information: Sertraline (Zoloft) is a selective serotonin reuptake inhibitor (SSRI) antidepressant. "
+                           "It is commonly used to treat depression, anxiety disorders, OCD, PTSD, and panic disorder. "
+                           "The typical dosage ranges from 50-200mg daily. Common side effects may include nausea, insomnia, and dizziness. "
+                           "Always consult with a healthcare provider before starting or changing medication."
+                )
+            elif "bupropion" in all_msg_content or "wellbutrin" in all_msg_content:
+                response = AIMessage(
+                    content="Based on the medical information: Bupropion (Wellbutrin) is a norepinephrine-dopamine reuptake inhibitor (NDRI) antidepressant. "
+                           "It is used to treat depression and seasonal affective disorder, and also helps with smoking cessation. "
+                           "The typical dosage ranges from 150-300mg daily. Common side effects may include insomnia, dry mouth, and headache."
+                )
+            elif "aripiprazole" in all_msg_content:
+                response = AIMessage(
+                    content="Based on the medical information: Aripiprazole is an antipsychotic medication used for schizophrenia and bipolar disorder. "
+                           "For children, special dosing considerations apply. Always consult a pediatric psychiatrist for proper dosing and monitoring."
+                )
+            elif "antidepressant" in all_msg_content:
+                response = AIMessage(
+                    content="Antidepressants are medications used to treat depression and other mood disorders. "
+                           "Common types include SSRIs (like Sertraline), SNRIs, and NDRIs (like Bupropion). "
+                           "They work by adjusting neurotransmitter levels in the brain. Always work with a healthcare provider to find the right treatment."
+                )
+            elif "side effect" in all_msg_content:
+                response = AIMessage(
+                    content="Common side effects of antidepressants can include nausea, changes in appetite, sleep disturbances, and dizziness. "
+                           "Most side effects are temporary and diminish as your body adjusts. If you experience severe or persistent side effects, "
+                           "contact your healthcare provider."
+                )
+            else:
+                response = AIMessage(
+                    content="I can provide information about medications and mental health treatments based on the retrieved medical information. "
+                           "What specific medication or treatment would you like to know about?"
+                )
 
         # Check if this is emotional support context
         elif any("empathetic" in str(msg.content).lower() or "emotional support" in str(msg.content).lower()
@@ -119,8 +184,8 @@ class FakeChatModel(BaseChatModel):
                            "I'm here to listen and support you. What's been on your mind?"
                 )
 
-        # Check if this is RAG/medical context
-        elif any("medical" in str(msg.content).lower() or "medication" in str(msg.content).lower()
+        # Keep the original RAG check for backward compatibility
+        elif any("medical" in str(msg.content).lower()
                  for msg in messages if hasattr(msg, 'content')):
             # RAG agent responses - simulate retrieval-augmented generation
             if "sertraline" in last_message or "zoloft" in last_message:

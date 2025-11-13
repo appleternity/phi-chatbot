@@ -118,11 +118,7 @@ curl -X POST http://localhost:8000/chat \
 {
   "session_id": "user-123",
   "message": "I hear you, and it's completely understandable to feel anxious sometimes. Would you like to talk about what's contributing to these feelings? I'm here to listen.",
-  "agent": "emotional_support",
-  "metadata": {
-    "classification_reasoning": "User expressing emotional distress",
-    "classification_confidence": 0.95
-  }
+  "agent": "emotional_support"
 }
 ```
 
