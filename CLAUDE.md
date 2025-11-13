@@ -10,6 +10,8 @@ Auto-generated from all feature plans. Last updated: 2025-10-29
 - **Streaming**: httpx 0.27+ for async SSE streaming
 - **Authentication**: Bearer token with hmac constant-time comparison (stdlib)
 - **LLM Chunking**: OpenRouter API, Pydantic 2.x, Tiktoken, Typer CLI
+- Python 3.11+ + LangChain-Core 0.3+, LangChain-OpenAI, Pydantic 2.x, pytes (006-centralized-llm)
+- N/A (configuration only, no data persistence) (006-centralized-llm)
 
 ## Project Structure
 
@@ -438,14 +440,44 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 
 ## Recent Changes
 
+### Centralized LLM Instance Management (2025-11-13)
+
+**Refactored LLM instance creation to singleton pattern with centralized management**:
+
+**Architecture Changes**:
+- **Centralized Module**: Created `app/llm/` module for LLM instance management
+- **Singleton Pattern**: Pre-configured instances (`response_llm`, `internal_llm`) with module-level initialization
+- **Factory Function**: `create_llm()` moved to `app/llm/factory.py` with environment-based switching
+- **Fail-Fast Migration**: Deleted `app/agents/base.py` to force immediate adoption
+
+**Configuration**:
+- **response_llm**: User-facing responses (temp=0.7, streaming enabled)
+- **internal_llm**: Internal operations (temp=1.0, streaming disabled, tags=["internal-llm"])
+- **Automatic Switching**: `TESTING=true` → FakeChatModel, `TESTING=false` → ChatOpenAI
+
+**Test Infrastructure**:
+- **Response Registry**: Centralized fake response patterns in `tests/fakes/response_registry.py`
+- **Organized Patterns**: Supervisor classification, RAG classification, medical responses, emotional responses
+- **Maintainable Testing**: Adding new patterns requires only updating registry
+
+**Refactored Files**:
+- **Created**: `app/llm/__init__.py`, `app/llm/factory.py`, `app/llm/instances.py`, `tests/fakes/response_registry.py`, `tests/unit/llm/test_instances.py`
+- **Updated**: `app/agents/supervisor.py`, `app/agents/emotional_support.py`, `app/agents/rag_agent.py`, `app/retrieval/advanced.py`, `tests/fakes/fake_chat_model.py`
+- **Deleted**: `app/agents/base.py`
+
+**Benefits**:
+- **Zero Configuration Duplication**: 5 `create_llm()` calls → 1 centralized factory (80% reduction)
+- **Simplified Testing**: Automatic test/prod switching with zero test infrastructure changes
+- **Type Safety**: `BaseChatModel` protocol ensures compatibility across FakeChatModel and ChatOpenAI
+- **Maintainable Responses**: Centralized registry makes adding new test patterns trivial
+- **100% Test Coverage**: All LLM module functions have complete coverage
+
 ### API Bearer Authentication (2025-11-12)
 
 **Added secure Bearer token authentication for all API endpoints**:
 
 - **Security-first design**: Constant-time token comparison using `hmac.compare_digest`
 - **Strict validation**: 64+ hexadecimal characters (256-bit entropy minimum)
-- **Comprehensive logging**: Authentication events tracked without exposing token values
-- **Test coverage**: Contract, integration, unit, and concurrent auth tests
 
 **Configuration**:
   - `API_BEARER_TOKEN`: Required environment variable (validated at startup)
@@ -522,33 +554,27 @@ dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
 
 **Refactored RAG agent from tool-based to router-based architecture with intelligent classification**:
 
-- **Key Change**: RAG agent now uses 3-node router architecture instead of tool-based approach
   - **classify**: LLM-based intent classification ("retrieve" vs. "respond")
   - **retrieve**: Full RAG workflow (retrieve + format + generate)
   - **respond**: Direct response without retrieval (greetings, thank yous, etc.)
 
-- **Architecture Benefits**:
   - **Full State Access**: Retrieval node receives complete conversation state, not just string queries
   - **Type Safety**: Restores `List[BaseMessage]` interface for history-aware retrieval
   - **Intelligent Routing**: LLM classifies whether query needs knowledge base lookup
   - **Efficiency**: Skips unnecessary retrieval for conversational queries
 
-- **Implementation Details**:
   - `app/agents/rag_agent.py`: Complete rewrite with `create_rag_agent()` factory function
   - Classification uses low temperature (0.1) for consistent routing decisions
   - Generation uses higher temperature (1.0) for creative, natural responses
   - Conditional edges use state-based routing (`lambda state: state["__routing"]`)
 
-- **Deleted Components**:
   - `app/tools/medical_search.py`: Obsolete tool-based implementation removed
   - `app/tools/__init__.py`: Updated to reflect tool deletion
 
-- **Testing**:
   - Comprehensive test suite verified all routing paths work correctly
   - Fixed FakeChatModel classification with word boundary matching
   - Validated history-aware retrieval with multi-turn conversations
 
-- **Files Modified**:
   - Updated: `app/agents/rag_agent.py` (complete rewrite), `app/tools/__init__.py`
   - Deleted: `app/tools/medical_search.py`
   - Enhanced: `tests/fakes/fake_chat_model.py` (classification support, word boundaries)
@@ -557,25 +583,21 @@ dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
 
 **Simplified supervisor classification by removing unnecessary complexity**:
 
-- **Key Change**: Removed structured output with confidence scores and reasoning
   - Supervisor now returns plain text agent name instead of Pydantic model
   - Removed `AgentClassification` model with `reasoning` and `confidence` fields
   - Added `VALID_AGENTS` set for explicit validation
   - Kept stream events for frontend integration
 
-- **Benefits**:
   - **Simpler Implementation**: Easier to debug and maintain
   - **Faster Classification**: No structured output parsing overhead
   - **More Robust**: Explicit validation instead of schema enforcement
   - **Cleaner Logs**: No unnecessary metadata cluttering logs
 
-- **Implementation Details**:
   - `app/agents/supervisor.py`: Use `llm.invoke()` instead of `llm.with_structured_output()`
   - `app/utils/prompts.py`: Updated to request plain text output only
   - Validation logic explicitly checks against `VALID_AGENTS` set
   - Stream events preserved for routing:started and routing:complete
 
-- **Files Modified**:
   - Updated: `app/agents/supervisor.py`, `app/utils/prompts.py`
 
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
