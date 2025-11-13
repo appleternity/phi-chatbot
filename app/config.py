@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     # API Authentication (001-api-bearer-auth)
     API_BEARER_TOKEN: str
 
+    # Keyword Search Configuration (005-multi-query-keyword-search)
+    # Enable pg_trgm trigram-based keyword matching alongside vector search
+    # Default: False (allows testing vector-only behavior first)
+    enable_keyword_search: bool = True
+
+    # Keyword search similarity threshold (0.0-1.0)
+    # Default pg_trgm threshold is 0.3, but this is too high for short queries
+    # against long documents. Recommended: 0.1 for medical terminology
+    keyword_similarity_threshold: float = 0.1
+
     @field_validator("embedding_provider")
     @classmethod
     def validate_embedding_provider(cls, v: str) -> str:
