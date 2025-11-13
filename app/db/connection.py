@@ -214,6 +214,58 @@ class DatabasePool:
             raise
 
     @conditional_retry
+    async def executemany(
+        self,
+        query: str,
+        args: List[tuple],
+        timeout: Optional[float] = None,
+    ) -> None:
+        """Execute a query multiple times with different parameters (bulk insert).
+
+        Executes the same query with multiple sets of parameters efficiently.
+        Useful for bulk INSERT operations. Connection failure handling depends
+        on settings.ENABLE_RETRIES configuration.
+
+        Args:
+            query: SQL query to execute (typically INSERT)
+            args: List of tuples, each containing parameters for one execution
+            timeout: Optional query timeout in seconds
+
+        Returns:
+            None (asyncpg executemany returns None)
+
+        Raises:
+            ValueError: If pool is not initialized
+            asyncpg.PostgresError: If query fails (immediately or after retries)
+
+        Note:
+            Retries are configurable via settings.ENABLE_RETRIES.
+            For POC/development, retries are disabled for fast failure.
+            asyncpg executemany does not return status for individual operations.
+
+        Example:
+            records = [
+                ("doc1", "Hello world"),
+                ("doc2", "Another doc"),
+            ]
+            await pool.executemany(
+                "INSERT INTO documents (id, text) VALUES ($1, $2)",
+                records
+            )
+        """
+        if self.pool is None:
+            raise ValueError("Connection pool not initialized. Call initialize() first.")
+
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.executemany(query, args, timeout=timeout)
+                logger.debug(f"Query executemany completed: {len(args)} operations")
+        except Exception as e:
+            logger.error(f"Query executemany failed: {e}")
+            logger.debug(f"Failed query: {query}")
+            raise
+
+    @conditional_retry
     async def fetch(
         self,
         query: str,
@@ -364,56 +416,3 @@ class DatabasePool:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit: cleanup pool."""
         await self.close()
-
-
-# ============================================================================
-# GLOBAL POOL (NOT USED - POC creates pool directly in main.py)
-# ============================================================================
-#
-# _global_pool: Optional[DatabasePool] = None
-#
-#
-# async def get_pool(
-#     min_size: int = 5,
-#     max_size: int = 20,
-# ) -> DatabasePool:
-#     """Get or create the global database pool instance.
-#
-#     Lazy initialization of global pool for application-wide use.
-#     Safe to call multiple times - returns existing pool if initialized.
-#
-#     Args:
-#         min_size: Minimum pool size (only used on first call)
-#         max_size: Maximum pool size (only used on first call)
-#
-#     Returns:
-#         Initialized DatabasePool instance
-#
-#     Example:
-#         pool = await get_pool()
-#         await pool.execute("INSERT INTO ...")
-#     """
-#     global _global_pool
-#
-#     if _global_pool is None:
-#         _global_pool = DatabasePool(min_size=min_size, max_size=max_size)
-#         await _global_pool.initialize()
-#
-#     return _global_pool
-#
-#
-# async def close_pool() -> None:
-#     """Close the global database pool.
-#
-#     Cleanup function for application shutdown.
-#     Idempotent - safe to call multiple times.
-#
-#     Example:
-#         # In application shutdown handler
-#         await close_pool()
-#     """
-#     global _global_pool
-#
-#     if _global_pool is not None:
-#         await _global_pool.close()
-#         _global_pool = None

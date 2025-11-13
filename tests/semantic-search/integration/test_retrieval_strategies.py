@@ -13,9 +13,9 @@ from contextlib import asynccontextmanager
 sys.path.insert(0, ".")
 
 from app.config import settings
-from app.db.connection import get_pool, close_pool
+from app.db.connection import DatabasePool
 from app.retrieval import get_retriever
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from app.embeddings.local_encoder import LocalEmbeddingProvider
 from app.core.qwen3_reranker import Qwen3Reranker
 
 
@@ -32,48 +32,44 @@ async def test_strategy(strategy_name: str):
     try:
         # 1. Initialize database connection
         print("✓ Connecting to database...")
-        pool = await get_pool()
-
-        # 2. Initialize encoder
-        print(f"✓ Creating encoder ({settings.EMBEDDING_MODEL})...")
-        encoder = Qwen3EmbeddingEncoder(
-            model_name=settings.EMBEDDING_MODEL,
-            device="mps",
-            batch_size=16,
-            max_length=1024,
-            normalize_embeddings=True,
-            instruction=None
-        )
-
-        # 3. Initialize reranker (if needed)
-        reranker = None
-        if strategy_name in ["rerank", "advanced"]:
-            print(f"✓ Creating reranker ({settings.RERANKER_MODEL})...")
-            reranker = Qwen3Reranker(
-                model_name=settings.RERANKER_MODEL,
+        async with DatabasePool() as pool:
+            # 2. Initialize encoder
+            print(f"✓ Creating encoder ({settings.EMBEDDING_MODEL})...")
+            encoder = LocalEmbeddingProvider(
+                model_name=settings.EMBEDDING_MODEL,
                 device="mps",
-                batch_size=8
+                batch_size=16,
+                max_length=1024,
+                normalize_embeddings=True,
+                instruction=None
             )
-        else:
-            print("✓ Skipping reranker (not needed for simple strategy)")
 
-        # 4. Create retriever using factory
-        print(f"✓ Creating retriever with factory...")
-        retriever = get_retriever(
-            pool=pool,
-            encoder=encoder,
-            reranker=reranker
-        )
+            # 3. Initialize reranker (if needed)
+            reranker = None
+            if strategy_name in ["rerank", "advanced"]:
+                print(f"✓ Creating reranker ({settings.RERANKER_MODEL})...")
+                reranker = Qwen3Reranker(
+                    model_name=settings.RERANKER_MODEL,
+                    device="mps",
+                    batch_size=8
+                )
+            else:
+                print("✓ Skipping reranker (not needed for simple strategy)")
 
-        # 5. Verify retriever type
-        retriever_class = retriever.__class__.__name__
-        print(f"✓ Retriever created: {retriever_class}")
+            # 4. Create retriever using factory
+            print(f"✓ Creating retriever with factory...")
+            retriever = get_retriever(
+                pool=pool,
+                encoder=encoder,
+                reranker=reranker
+            )
 
-        # 6. Test search (simple smoke test - don't actually run search to avoid loading models)
-        print(f"✓ Strategy '{strategy_name}' initialized successfully!")
+            # 5. Verify retriever type
+            retriever_class = retriever.__class__.__name__
+            print(f"✓ Retriever created: {retriever_class}")
 
-        # Clean up
-        await close_pool()
+            # 6. Test search (simple smoke test - don't actually run search to avoid loading models)
+            print(f"✓ Strategy '{strategy_name}' initialized successfully!")
 
         return True
 

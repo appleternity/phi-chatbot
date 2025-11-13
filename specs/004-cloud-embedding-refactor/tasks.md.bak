@@ -1,0 +1,346 @@
+# Tasks: Cloud-Based Embedding Refactoring
+
+**Input**: Design documents from `/specs/004-cloud-embedding-refactor/`
+**Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, contracts/ ✅, quickstart.md ✅
+
+**Tests**: Included per Constitution Principle III (Test-First Development - NON-NEGOTIABLE)
+
+**Organization**: Tasks organized by user story to enable independent implementation and testing.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (US1 = User Story 1)
+- Include exact file paths in descriptions
+
+## Path Conventions
+
+This is a web application with FastAPI backend:
+- Core service code: `app/`
+- Preprocessing utilities: `src/`
+- Tests: `tests/`
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: Project initialization and directory structure for new embedding abstraction
+
+- [X] T001 Create app/embeddings/ directory structure with __init__.py
+- [X] T002 [P] Create tests/contract/ directory for protocol tests
+- [X] T003 [P] Create tests/integration/ directory for provider integration tests
+- [X] T004 [P] Update pyproject.toml to ensure openai>=1.0.0 dependency is present
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Core abstraction layer and local provider migration that MUST be complete before cloud providers can be added
+
+**⚠️ CRITICAL**: No User Story 1 work (cloud providers) can begin until this phase is complete
+
+### 2.1: Abstract Interface & Protocol
+
+- [X] T005 Create EmbeddingProvider protocol in app/embeddings/base.py with encode(), get_embedding_dimension(), get_provider_name(), validate_dimension() methods per contracts/embedding_provider_protocol.py
+- [X] T006 [P] Create retry utility function retry_with_backoff() in app/embeddings/utils.py with exponential backoff (2s, 4s, 8s) and jitter logic per research.md section 4
+
+### 2.2: Local Provider Migration (from src/ to app/)
+
+- [X] T007 Copy src/embeddings/encoder.py to app/embeddings/local_encoder.py preserving Qwen3EmbeddingEncoder class
+- [X] T008 Create LocalEmbeddingProvider wrapper class in app/embeddings/local_encoder.py implementing EmbeddingProvider protocol, wrapping Qwen3EmbeddingEncoder instance
+- [X] T009 Implement LocalEmbeddingProvider.encode() method delegating to Qwen3EmbeddingEncoder
+- [X] T010 [P] Implement LocalEmbeddingProvider.get_embedding_dimension() returning 1024
+- [X] T011 [P] Implement LocalEmbeddingProvider.get_provider_name() returning "local_qwen3"
+- [X] T012 Implement LocalEmbeddingProvider.validate_dimension() encoding test string and comparing against expected_dim parameter
+
+### 2.3: Configuration Schema Updates
+
+- [X] T013 Add embedding_provider field to app/config.py Settings class with default="local" and validation for ["local", "openrouter", "aliyun"]
+- [X] T014 [P] Add aliyun_api_key field to app/config.py Settings class with default="" for Aliyun DashScope API
+- [X] T015 [P] Add table_name field to app/config.py Settings class with default="vector_chunks" for A/B testing support
+
+### 2.4: Provider Factory
+
+- [X] T016 Create EmbeddingProviderFactory class in app/embeddings/factory.py with create_provider(settings: Settings) static method
+- [X] T017 Implement factory logic for "local" provider type, instantiating LocalEmbeddingProvider with settings.EMBEDDING_MODEL, device="mps", batch_size=16
+- [X] T018 Add ValueError raise for invalid embedding_provider values with clear error message listing valid options
+
+### 2.5: Import Path Migration
+
+- [X] T019 Update app/retrieval/simple.py to import from app.embeddings.local_encoder instead of src.embeddings.encoder
+- [X] T020 [P] Update app/retrieval/rerank.py to import from app.embeddings.local_encoder instead of src.embeddings.encoder
+- [X] T021 [P] Update app/retrieval/advanced.py to import from app.embeddings.local_encoder instead of src.embeddings.encoder
+- [X] T022 Update app/retrieval/factory.py to use EmbeddingProviderFactory.create_provider() for provider instantiation
+- [X] T023 Update tests/unit/test_local_encoder.py to import from app.embeddings.local_encoder
+- [X] T024 Add deprecation warning comment to src/embeddings/encoder.py directing users to app/embeddings/local_encoder.py
+
+**Checkpoint**: Foundation ready - local provider abstraction complete, all imports migrated, cloud providers can now be added in User Story 1
+
+---
+
+## Phase 3: User Story 1 - Seamless Provider Switching (Priority: P1) 🎯 MVP
+
+**Goal**: Enable switching between local Qwen3, OpenRouter API, and Aliyun text-embedding-v4 providers via configuration without code changes
+
+**Independent Test**:
+1. Configure different providers in .env (embedding_provider=local/openrouter/aliyun)
+2. Restart service
+3. Verify queries return semantically equivalent results (>95% retrieval overlap)
+4. Measure response time differences between providers
+
+### 3.1: Contract Tests (Write FIRST - Must FAIL before implementation) ⚠️
+
+- [ ] T025 [P] [US1] Contract test: Verify LocalEmbeddingProvider implements EmbeddingProvider protocol in tests/contract/test_embedding_provider_interface.py
+- [ ] T026 [P] [US1] Contract test: Verify all providers implement encode() with correct signature in tests/contract/test_embedding_provider_interface.py
+- [ ] T027 [P] [US1] Contract test: Verify all providers return 1024-dim embeddings in tests/contract/test_embedding_provider_interface.py
+- [ ] T028 [P] [US1] Contract test: Verify provider names match specification ("local_qwen3", "openrouter", "aliyun") in tests/contract/test_embedding_provider_interface.py
+
+### 3.2: OpenRouter Provider Implementation
+
+- [ ] T029 [US1] Create OpenRouterEmbeddingProvider class in app/embeddings/openrouter_provider.py with __init__(api_key, api_base="https://openrouter.ai/api/v1", model_name="qwen/qwen3-embedding-0.6b", batch_size=100, max_retries=3, timeout=30)
+- [ ] T030 [US1] Initialize openai.OpenAI client in OpenRouterEmbeddingProvider.__init__() with custom base_url=api_base per research.md section 1
+- [ ] T031 [US1] Implement OpenRouterEmbeddingProvider.encode() calling client.embeddings.create() with model and input parameters, returning np.ndarray or List[np.ndarray]
+- [ ] T032 [US1] Implement OpenRouterEmbeddingProvider._encode_with_retry() wrapping API call with retry_with_backoff() utility for transient failures
+- [ ] T033 [P] [US1] Implement OpenRouterEmbeddingProvider.get_embedding_dimension() returning 1024
+- [ ] T034 [P] [US1] Implement OpenRouterEmbeddingProvider.get_provider_name() returning "openrouter"
+- [ ] T035 [US1] Implement OpenRouterEmbeddingProvider.validate_dimension() encoding test string and comparing dimension
+- [ ] T036 [US1] Add batch processing logic in OpenRouterEmbeddingProvider.encode() splitting texts into batches of batch_size=100 with progress logging
+- [ ] T037 [US1] Add API call logging (request timestamp, token count, response time, success/failure) in OpenRouterEmbeddingProvider._encode_with_retry()
+
+### 3.3: Aliyun Provider Implementation
+
+- [ ] T038 [US1] Create AliyunEmbeddingProvider class in app/embeddings/aliyun_provider.py with __init__(api_key, api_base="https://dashscope.aliyuncs.com/compatible-mode/v1", model_name="text-embedding-v4", batch_size=100, max_retries=3, timeout=30)
+- [ ] T039 [US1] Initialize openai.OpenAI client in AliyunEmbeddingProvider.__init__() with custom base_url=api_base per research.md section 2
+- [ ] T040 [US1] Implement AliyunEmbeddingProvider.encode() calling client.embeddings.create() with model="text-embedding-v4", dimensions=1024, encoding_format="float"
+- [ ] T041 [US1] Implement AliyunEmbeddingProvider._encode_with_retry() wrapping API call with retry_with_backoff() utility
+- [ ] T042 [P] [US1] Implement AliyunEmbeddingProvider.get_embedding_dimension() returning 1024
+- [ ] T043 [P] [US1] Implement AliyunEmbeddingProvider.get_provider_name() returning "aliyun"
+- [ ] T044 [US1] Implement AliyunEmbeddingProvider.validate_dimension() encoding test string and comparing dimension
+- [ ] T045 [US1] Add batch processing logic in AliyunEmbeddingProvider.encode() splitting texts into batches of batch_size=100 with progress logging
+- [ ] T046 [US1] Add API call logging (request timestamp, token count, response time, success/failure) in AliyunEmbeddingProvider._encode_with_retry()
+
+### 3.4: Factory Integration for Cloud Providers
+
+- [ ] T047 [US1] Add "openrouter" case to EmbeddingProviderFactory.create_provider() instantiating OpenRouterEmbeddingProvider with settings.openai_api_key
+- [ ] T048 [US1] Add "aliyun" case to EmbeddingProviderFactory.create_provider() instantiating AliyunEmbeddingProvider with settings.aliyun_api_key
+- [ ] T049 [US1] Add dimension validation call provider.validate_dimension(settings.embedding_dim) after provider instantiation in factory
+
+### 3.5: Integration Tests for Cloud Providers
+
+- [ ] T050 [P] [US1] Integration test: OpenRouter API authentication with valid/invalid keys in tests/integration/test_openrouter_provider.py (mocked responses)
+- [ ] T051 [P] [US1] Integration test: OpenRouter retry logic on HTTP 5xx errors with exponential backoff verification in tests/integration/test_openrouter_provider.py
+- [ ] T052 [P] [US1] Integration test: OpenRouter batch processing with automatic splitting in tests/integration/test_openrouter_provider.py
+- [ ] T053 [P] [US1] Integration test: Aliyun API authentication with valid/invalid keys in tests/integration/test_aliyun_provider.py (mocked responses)
+- [ ] T054 [P] [US1] Integration test: Aliyun dense embedding format validation (1024-dim) in tests/integration/test_aliyun_provider.py
+- [ ] T055 [P] [US1] Integration test: Aliyun batch processing with automatic splitting in tests/integration/test_aliyun_provider.py
+
+### 3.6: Provider Switching Tests
+
+- [ ] T056 [US1] Integration test: Config change from local to openrouter triggers correct provider initialization in tests/integration/test_provider_switching.py
+- [ ] T057 [US1] Integration test: Config change from openrouter to aliyun triggers correct provider initialization in tests/integration/test_provider_switching.py
+- [ ] T058 [US1] Integration test: Service startup with invalid provider type fails fast with clear error in tests/integration/test_provider_switching.py
+- [ ] T059 [US1] Integration test: Service startup with missing API key for configured provider fails fast in tests/integration/test_provider_switching.py
+
+### 3.7: Configuration Validation Tests
+
+- [ ] T060 [P] [US1] Unit test: embedding_provider enum validation accepts ["local", "openrouter", "aliyun"] in tests/unit/test_config_validation.py
+- [ ] T061 [P] [US1] Unit test: embedding_provider enum validation rejects invalid values in tests/unit/test_config_validation.py
+- [ ] T062 [P] [US1] Unit test: table_name validation requires non-empty string in tests/unit/test_config_validation.py
+
+### 3.8: Factory Unit Tests
+
+- [ ] T063 [P] [US1] Unit test: EmbeddingProviderFactory.create_provider() with provider="local" returns LocalEmbeddingProvider in tests/unit/test_embedding_factory.py
+- [ ] T064 [P] [US1] Unit test: EmbeddingProviderFactory.create_provider() with provider="openrouter" returns OpenRouterEmbeddingProvider in tests/unit/test_embedding_factory.py
+- [ ] T065 [P] [US1] Unit test: EmbeddingProviderFactory.create_provider() with provider="aliyun" returns AliyunEmbeddingProvider in tests/unit/test_embedding_factory.py
+- [ ] T066 [P] [US1] Unit test: EmbeddingProviderFactory raises ValueError for invalid provider type in tests/unit/test_embedding_factory.py
+- [ ] T067 [P] [US1] Unit test: EmbeddingProviderFactory raises clear error when required API keys are missing in tests/unit/test_embedding_factory.py
+
+### 3.9: Error Handling Implementation
+
+- [ ] T068 [US1] Add HTTP 401/403 detection in OpenRouterEmbeddingProvider with fail-fast error message including provider name and endpoint
+- [ ] T069 [US1] Add HTTP 429 rate limit handling in OpenRouterEmbeddingProvider with longer backoff delay
+- [ ] T070 [US1] Add dimension mismatch error in all providers' validate_dimension() with actual vs expected values and "re-indexing required" guidance
+- [ ] T071 [US1] Add HTTP 401/403 detection in AliyunEmbeddingProvider with fail-fast error message
+- [ ] T072 [US1] Add HTTP 429 rate limit handling in AliyunEmbeddingProvider with longer backoff delay
+
+### 3.10: Documentation & Export Configuration
+
+- [ ] T073 [US1] Update app/embeddings/__init__.py to export EmbeddingProviderFactory, EmbeddingProvider, LocalEmbeddingProvider, OpenRouterEmbeddingProvider, AliyunEmbeddingProvider
+- [ ] T074 [US1] Add docstrings to all public methods in OpenRouterEmbeddingProvider following Google-style format
+- [ ] T075 [US1] Add docstrings to all public methods in AliyunEmbeddingProvider following Google-style format
+
+**Checkpoint**: At this point, User Story 1 should be fully functional - all three providers working, configuration-based switching enabled, retrieval queries using configured provider
+
+---
+
+## Phase 4: Polish & Cross-Cutting Concerns
+
+**Purpose**: Improvements that affect multiple components and final validation
+
+- [ ] T076 [P] Verify all imports from src/embeddings are eliminated: run `grep -r "from src.embeddings" app/` and confirm zero results
+- [ ] T077 [P] Run full test suite: `pytest tests/ -v --cov=app.embeddings --cov-report=html` and verify >90% coverage
+- [ ] T078 [P] Type checking: Run `mypy app/embeddings/ --ignore-missing-imports` and fix any type errors
+- [ ] T079 [P] Code formatting: Run `black app/embeddings/ tests/` and `ruff check app/embeddings/ --fix`
+- [ ] T080 Update CLAUDE.md with new technologies: OpenAI Python client for cloud providers, embedding provider abstraction
+- [ ] T081 Run quickstart.md validation: Follow provider switching workflows from quickstart.md and verify all steps work
+- [ ] T082 Performance validation: Measure startup time <10s, single text query latency <500ms (p95), batch processing <2s for 10 texts
+- [ ] T083 Create .env.example file with all required configuration parameters (EMBEDDING_PROVIDER, DASHSCOPE_API_KEY, TABLE_NAME) and documentation comments
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies - can start immediately
+- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS User Story 1
+- **User Story 1 (Phase 3)**: Depends on Foundational phase completion
+- **Polish (Phase 4)**: Depends on User Story 1 completion
+
+### User Story 1 Internal Dependencies
+
+**Contract Tests First** (T025-T028):
+- Must be written FIRST and FAIL before any implementation
+- Run: `pytest tests/contract/test_embedding_provider_interface.py -v` - should see failures
+
+**OpenRouter Implementation** (T029-T037):
+- Sequential: __init__ → client setup → encode() → retry logic → dimension methods → batch processing → logging
+- Can develop in parallel with Aliyun implementation (T038-T046)
+
+**Aliyun Implementation** (T038-T046):
+- Sequential: __init__ → client setup → encode() → retry logic → dimension methods → batch processing → logging
+- Can develop in parallel with OpenRouter implementation (T029-T037)
+
+**Factory Integration** (T047-T049):
+- Depends on OpenRouter and Aliyun implementations being complete
+
+**Integration Tests** (T050-T059):
+- Can run in parallel after provider implementations complete
+- T050-T052: OpenRouter tests (parallel)
+- T053-T055: Aliyun tests (parallel)
+- T056-T059: Provider switching tests (sequential)
+
+**Unit Tests** (T060-T067):
+- All can run in parallel after factory integration complete
+
+**Error Handling** (T068-T072):
+- Can implement in parallel after base provider implementations
+
+### Parallel Opportunities
+
+**Phase 1 (Setup)**: All tasks T001-T004 can run in parallel
+
+**Phase 2 (Foundational)**:
+- T006 (retry utils) parallel with T005 (protocol)
+- T009-T012 (LocalEmbeddingProvider methods) can run in parallel after T008
+- T014-T015 (config fields) can run in parallel with T013
+- T019-T024 (import updates) can all run in parallel after T017-T018
+
+**Phase 3 (User Story 1)**:
+- T025-T028 (contract tests): All parallel
+- T029-T037 (OpenRouter) parallel with T038-T046 (Aliyun)
+- T033-T034 (OpenRouter dimension methods) parallel within OpenRouter implementation
+- T042-T043 (Aliyun dimension methods) parallel within Aliyun implementation
+- T050-T055 (integration tests): All parallel
+- T060-T067 (unit tests): All parallel
+- T068-T072 (error handling): All parallel
+- T073-T075 (documentation): All parallel
+
+**Phase 4 (Polish)**: T076-T079 can run in parallel
+
+---
+
+## Parallel Example: User Story 1 Cloud Providers
+
+```bash
+# Launch OpenRouter and Aliyun implementations in parallel:
+Task: "Create OpenRouterEmbeddingProvider class in app/embeddings/openrouter_provider.py" (T029-T037)
+Task: "Create AliyunEmbeddingProvider class in app/embeddings/aliyun_provider.py" (T038-T046)
+
+# Launch all integration tests in parallel after implementations complete:
+Task: "OpenRouter API authentication test" (T050)
+Task: "OpenRouter retry logic test" (T051)
+Task: "OpenRouter batch processing test" (T052)
+Task: "Aliyun API authentication test" (T053)
+Task: "Aliyun embedding format test" (T054)
+Task: "Aliyun batch processing test" (T055)
+
+# Launch all unit tests in parallel after factory complete:
+Task: "Factory local provider test" (T063)
+Task: "Factory openrouter provider test" (T064)
+Task: "Factory aliyun provider test" (T065)
+Task: "Factory invalid provider test" (T066)
+Task: "Factory missing API key test" (T067)
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (User Story 1 Complete)
+
+1. **Complete Phase 1: Setup** (T001-T004) - 15 mins
+2. **Complete Phase 2: Foundational** (T005-T024) - 4 hours
+   - CRITICAL: Local provider migration and abstraction layer
+   - Checkpoint: All existing functionality still works with new import paths
+3. **Complete Phase 3: User Story 1** (T025-T075) - 8 hours
+   - Contract tests FIRST (must fail)
+   - Cloud provider implementations (OpenRouter + Aliyun in parallel)
+   - Integration and unit tests
+   - Error handling and documentation
+4. **STOP and VALIDATE**: Test provider switching independently
+   - Switch between all 3 providers via .env configuration
+   - Verify >95% retrieval overlap for identical queries
+   - Measure response times (local fastest, cloud acceptable)
+5. **Complete Phase 4: Polish** (T076-T083) - 2 hours
+6. **Total estimated time: ~14-15 hours**
+
+### Incremental Delivery
+
+1. **Foundation** (Phase 1 + 2) → Local provider working with new abstraction → Validate existing functionality
+2. **Add OpenRouter** (subset of Phase 3) → Test OpenRouter independently → Demo cloud embedding
+3. **Add Aliyun** (rest of Phase 3) → Test Aliyun independently → Demo provider comparison
+4. **Polish** (Phase 4) → Final validation → Production ready
+
+### Test-Driven Development Flow
+
+**CRITICAL**: Follow TDD red-green-refactor cycle per Constitution Principle III
+
+1. **RED**: Write contract test for EmbeddingProvider protocol (T025-T028) - tests MUST fail
+2. **GREEN**: Implement LocalEmbeddingProvider to pass tests (T007-T012)
+3. **REFACTOR**: Clean up implementation
+4. **RED**: Write integration tests for OpenRouter (T050-T052) - tests MUST fail
+5. **GREEN**: Implement OpenRouterEmbeddingProvider (T029-T037)
+6. **REFACTOR**: Extract common patterns to utils
+7. **RED**: Write integration tests for Aliyun (T053-T055) - tests MUST fail
+8. **GREEN**: Implement AliyunEmbeddingProvider (T038-T046)
+9. **REFACTOR**: Final cleanup and optimization
+
+---
+
+## Success Validation Checklist
+
+After completing all tasks, verify against Success Criteria from spec.md:
+
+- [ ] **SC-001**: Service startup time <10s when switching providers (measure: time from config load to ready state)
+- [ ] **SC-002**: Embedding latency <500ms for single text (p95), <2000ms for batch (10 texts) - measure with all providers
+- [ ] **SC-003**: Retrieval accuracy >95% precision@5 overlap when switching providers for identical queries
+- [ ] **SC-004**: API failures trigger retry logic (100% of HTTP 5xx) and fail fast (100% of HTTP 4xx) with actionable errors
+- [ ] **SC-005**: Zero results from `grep -r "from src" app/` - all imports migrated to app/embeddings/
+- [ ] **SC-006**: Provider switching requires zero code changes - only .env configuration update and service restart
+- [ ] **SC-007**: All providers generate 1024-dimensional embeddings (validate on 100 sample documents)
+- [ ] **SC-008**: Retrieval queries target configured table_name only (validate via query logs)
+
+---
+
+## Notes
+
+- [P] tasks = different files or independent components, no blocking dependencies
+- [US1] label maps task to User Story 1 for traceability
+- Contract tests (T025-T028) MUST be written FIRST and MUST FAIL before implementation
+- All providers use identical OpenAI client pattern with different base_url (research.md sections 1-2)
+- Retry logic shared across all cloud providers via retry_with_backoff() utility
+- Each provider independently testable via mocked API responses
+- Dimension validation prevents runtime errors from provider/database mismatches
+- Commit after each task or logical group for granular rollback capability
+- Constitution Principle III (Test-First Development) is NON-NEGOTIABLE - follow TDD flow strictly

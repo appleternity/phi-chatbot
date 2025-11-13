@@ -3,14 +3,14 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from app.models import HealthResponse, ChatRequest, ChatResponse, ChatStreamRequest
 from app.config import settings
 from app.core.session_store import InMemorySessionStore, SessionStore, SessionData
 from app.db.connection import DatabasePool
 from app.graph.state import MedicalChatState
-from app.retrieval import get_retriever
-from src.embeddings.encoder import Qwen3EmbeddingEncoder
+from app.retrieval.factory import create_retriever
+from app.embeddings import create_embedding_provider
 from app.core.qwen3_reranker import Qwen3Reranker
 from app.graph.builder import build_medical_chatbot_graph
 from app.dependencies import get_graph, get_session_store
@@ -20,6 +20,9 @@ from typing import Optional
 
 # Import streaming logic
 from app.api.streaming import stream_chat_events
+
+# Import authentication dependency and custom exception
+from app.core.auth.dependencies import verify_bearer_token, AuthenticationException
 
 # Configure logging
 logging.basicConfig(
@@ -47,6 +50,20 @@ async def lifespan(app: FastAPI):
     # STARTUP
     # ========================================================================
 
+    # 0. Validate API Bearer Token (fail-fast if invalid)
+    logger.info("Validating API Bearer Token configuration...")
+    try:
+        token = settings.API_BEARER_TOKEN
+        # Token validation is handled by Pydantic validator in Settings class
+        # If we reach here, token passed validation (64+ hex chars)
+        logger.info(f"✅ API Bearer Token validated ({len(token)} characters)")
+    except Exception as e:
+        logger.error(f"❌ API Bearer Token validation failed: {e}")
+        logger.error(
+            "Generate a valid token using: openssl rand -hex 32"
+        )
+        raise
+
     # 1. Initialize session store
     logger.info("Initializing session store...")
     session_store = InMemorySessionStore(ttl_seconds=settings.session_ttl_seconds)
@@ -68,36 +85,47 @@ async def lifespan(app: FastAPI):
         "pgvector extension not found. Run: python -m app.db.schema"
     )
 
-    # Check vector_chunks table
-    # TODO: We might consider setting the "vector_chunks" table name as a constant in config
+    # Check vector_chunks table (use settings.table_name)
+    # Security: Use parameterized query to prevent SQL injection
     table_exists = await pool.fetchval(
         "SELECT EXISTS(SELECT 1 FROM information_schema.tables "
-        "WHERE table_name = 'vector_chunks')"
+        "WHERE table_name = $1)",
+        settings.table_name
     )
     assert table_exists, (
-        "vector_chunks table not found. Run: python -m app.db.schema"
+        f"{settings.table_name} table not found. Run: python -m src.embeddings.ingest_embeddings"
     )
 
     # Get document count
-    doc_count = await pool.fetchval("SELECT COUNT(*) FROM vector_chunks")
+    # Security: table_name quoted to support special characters (e.g., hyphens)
+    # PostgreSQL doesn't support parameterized identifiers, so quoted f-string is safe
+    doc_count = await pool.fetchval(f'SELECT COUNT(*) FROM "{settings.table_name}"')
     logger.info(f"📊 Database contains {doc_count} indexed chunks")
 
     assert doc_count > 0, (
-        "No documents indexed. Run: python -m src.embeddings.cli index --input data/chunking_final"
+        "No documents indexed. Run: python -m src.embeddings.generate_embeddings && python -m src.embeddings.ingest_embeddings"
     )
 
     logger.info("✅ PostgreSQL connection established")
 
-    # 3. Initialize embedding encoder
-    logger.info(f"Initializing encoder: {settings.EMBEDDING_MODEL}")
-    encoder = Qwen3EmbeddingEncoder(
-        model_name=settings.EMBEDDING_MODEL,
-        device="mps",
-        batch_size=1,
-        max_length=8192,
-        normalize_embeddings=True,
-        instruction=None
+    # 3. Initialize embedding provider with explicit parameters
+    logger.info(f"Initializing embedding provider: {settings.embedding_provider}")
+    encoder = create_embedding_provider(
+        provider_type=settings.embedding_provider,
+        embedding_model=settings.EMBEDDING_MODEL,
+        device=settings.device,
+        batch_size=settings.batch_size,
+        openai_api_key=settings.openai_api_key,
+        aliyun_api_key=settings.aliyun_api_key
     )
+
+    # NOTE: Dimension validation removed for simplicity.
+    # If we need validation in the future, we could:
+    # 1. Generate a test embedding: test_embedding = encoder.encode("test")
+    # 2. Try inserting into database and check for dimension mismatch error
+    # 3. Or query schema_metadata and compare dimensions
+    # However, dimension mismatches should rarely happen in practice.
+    # The database will fail fast on first insert if dimensions don't match.
 
     # Preload encoder if configured
     if settings.PRELOAD_MODELS:
@@ -112,7 +140,7 @@ async def lifespan(app: FastAPI):
         reranker = Qwen3Reranker(
             model_name=settings.RERANKER_MODEL,
             device="mps",
-            batch_size=1,
+            batch_size=4,  # Process 4 documents at a time to avoid MPS tensor size limits
         )
 
         if settings.PRELOAD_MODELS:
@@ -124,12 +152,14 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"Reranker not needed for '{settings.RETRIEVAL_STRATEGY}' strategy")
 
-    # 5. Create retriever using factory
-    logger.info(f"Creating retriever (strategy: {settings.RETRIEVAL_STRATEGY})...")
-    retriever = get_retriever(
+    # 5. Create retriever with explicit strategy parameter
+    logger.info(f"Creating retriever (strategy: {settings.RETRIEVAL_STRATEGY}, table: {settings.table_name})...")
+    retriever = create_retriever(
+        strategy=settings.RETRIEVAL_STRATEGY,
         pool=pool,
         encoder=encoder,
-        reranker=reranker
+        reranker=reranker,
+        table_name=settings.table_name
     )
     app.state.retriever = retriever
     logger.info("✅ Retriever initialized")
@@ -172,6 +202,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Custom exception handler for authentication errors
+# This returns the proper format: {'detail': '...', 'error_code': '...'}
+# instead of HTTPException's nested format: {'detail': {'detail': '...', 'error_code': '...'}}
+@app.exception_handler(AuthenticationException)
+async def authentication_exception_handler(request: Request, exc: AuthenticationException):
+    """Handle AuthenticationException and return flat error structure.
+
+    Args:
+        request: The incoming request
+        exc: The AuthenticationException with error details
+
+    Returns:
+        JSONResponse with 401 status and flat error structure
+    """
+    return JSONResponse(
+        status_code=401,
+        content=exc.error.model_dump(),
+    )
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -197,7 +246,8 @@ async def chat(
     request: ChatRequest,
     fastapi_request: Request,
     graph = Depends(get_graph),
-    session_store: SessionStore = Depends(get_session_store)
+    session_store: SessionStore = Depends(get_session_store),
+    token: str = Depends(verify_bearer_token)
 ):
     """Unified chat endpoint with streaming and non-streaming modes.
 

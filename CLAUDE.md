@@ -3,16 +3,13 @@
 Auto-generated from all feature plans. Last updated: 2025-10-29
 
 ## Active Technologies
-- Python 3.11+ + transformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI (002-semantic-search)
-- PostgreSQL 15+ with pgvector extension (002-semantic-search)
-- Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming (003-sse-streaming)
-- PostgreSQL 15+ with pgvector (existing - no changes needed) (003-sse-streaming)
-
-- Python 3.11+ (001-llm-contextual-chunking)
-- OpenRouter API for LLM calls
-- Pydantic 2.x for data validation
-- Tiktoken for token counting
-- Typer for CLI
+- **Python 3.11+** with FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+
+- **Embeddings**: Multi-provider support (local Qwen3, OpenRouter API, Aliyun DashScope) via OpenAI Python client
+- **Database**: PostgreSQL 15+ with pgvector extension for vector similarity search
+- **ML Models**: transformers, torch (MPS support), sentence-transformers for local embedding generation
+- **Streaming**: httpx 0.27+ for async SSE streaming
+- **Authentication**: Bearer token with hmac constant-time comparison (stdlib)
+- **LLM Chunking**: OpenRouter API, Pydantic 2.x, Tiktoken, Typer CLI
 
 ## Project Structure
 
@@ -29,16 +26,19 @@ src/
     metadata_validator.py   # Validation utilities
     text_aligner.py         # Coverage validation
 
-  embeddings/               # Semantic search indexing (002-semantic-search)
-    models.py               # ChunkMetadata, VectorDocument
-    encoder.py              # Qwen3EmbeddingEncoder (MPS support)
-    indexer.py              # Batch indexing pipeline
-    cli.py                  # CLI commands: index, validate, version
-
 app/
+  embeddings/               # Cloud embedding refactor (004-cloud-embedding-refactor)
+    base.py                 # EmbeddingProvider protocol interface
+    factory.py              # Multi-provider factory (local/openrouter/aliyun)
+    local_encoder.py        # LocalEmbeddingProvider (Qwen3-Embedding-0.6B on MPS/CUDA/CPU)
+    openrouter_provider.py  # OpenRouterEmbeddingProvider (Qwen3-Embedding-0.6B API)
+    aliyun_provider.py      # AliyunEmbeddingProvider (text-embedding-v4 API)
+    utils.py                # Retry logic, error handling utilities
+
   core/
     postgres_retriever.py   # PostgreSQL + pgvector retriever
     qwen3_reranker.py       # Qwen3-Reranker-0.6B for reranking
+
   db/
     schema.py               # Database schema and migrations
     connection.py           # Connection pooling with asyncpg
@@ -49,6 +49,91 @@ tests/
     integration/            # Integration tests
     contract/               # Contract tests
 ```
+
+## Authentication Setup (001-api-bearer-auth)
+
+### Quick Start
+
+**1. Generate API Token**:
+```bash
+# Generate 64-character hex token (256-bit entropy)
+openssl rand -hex 32
+```
+
+**2. Configure Environment Variable**:
+```bash
+# Add to .env file
+echo 'API_BEARER_TOKEN="your-generated-token-here"' >> .env
+```
+
+**3. Start Service**:
+```bash
+# Service will validate token at startup
+python -m app.main
+```
+
+**Expected Startup Log**:
+```
+INFO:     Validating API Bearer Token configuration...
+INFO:     ✅ API Bearer Token validated (64 characters)
+```
+
+### Making Authenticated Requests
+
+**With Valid Token** (succeeds):
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Authorization: Bearer your-generated-token-here" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test", "message": "Hello"}'
+```
+
+**Without Token** (fails with 401):
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test", "message": "Hello"}'
+# Returns: {"detail": "Missing Authorization header", "error_code": "MISSING_TOKEN"}
+```
+
+### Token Requirements
+
+- **Format**: Hexadecimal characters only (0-9, a-f, A-F)
+- **Length**: Minimum 64 characters (enforced by Pydantic validator)
+- **Entropy**: 256-bit minimum for security
+- **Storage**: Use .env file (already in .gitignore)
+
+### Token Rotation
+
+```bash
+# 1. Generate new token
+openssl rand -hex 32
+
+# 2. Update .env
+export API_BEARER_TOKEN="new-token-here"
+
+# 3. Restart service (old token invalidated immediately)
+python -m app.main
+```
+
+### Troubleshooting
+
+**"Field required" error**:
+```bash
+# Verify token is set
+echo $API_BEARER_TOKEN
+
+# If empty, set it
+export API_BEARER_TOKEN=$(openssl rand -hex 32)
+```
+
+**"Must be at least 64 hexadecimal characters"**:
+```bash
+# Regenerate with correct length
+export API_BEARER_TOKEN=$(openssl rand -hex 32)  # 32 bytes = 64 hex chars
+```
+
+For detailed setup guide, see: `specs/001-api-bearer-auth/quickstart.md`
 
 ## Commands
 
@@ -290,21 +375,19 @@ python -m src.embeddings.cli version
 ```python
 import asyncio
 from app.core.postgres_retriever import PostgreSQLRetriever
-from app.db.connection import get_pool, close_pool
+from app.db.connection import DatabasePool
 
 async def test_search():
-    pool = await get_pool()
-    retriever = PostgreSQLRetriever(pool)
+    async with DatabasePool() as pool:
+        retriever = PostgreSQLRetriever(pool)
 
-    # Search with reranking (default)
-    results = await retriever.search("aripiprazole mechanism of action", top_k=5)
+        # Search with reranking (default)
+        results = await retriever.search("aripiprazole mechanism of action", top_k=5)
 
-    for i, doc in enumerate(results, 1):
-        print(f"\n{i}. {doc.metadata['chunk_id']}")
-        print(f"   Score: {doc.metadata['rerank_score']:.4f}")
-        print(f"   Content: {doc.content[:200]}...")
-
-    await close_pool()
+        for i, doc in enumerate(results, 1):
+            print(f"\n{i}. {doc.metadata['chunk_id']}")
+            print(f"   Score: {doc.metadata['rerank_score']:.4f}")
+            print(f"   Content: {doc.content[:200]}...")
 
 asyncio.run(test_search())
 ```
@@ -354,8 +437,86 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 - Comprehensive docstrings for all public methods
 
 ## Recent Changes
-- 003-sse-streaming: Added Python 3.11+ + FastAPI 0.115+, LangGraph 0.6.0, LangChain-Core 0.3+, uvicorn 0.32+ with httpx 0.27+ for async streaming
-- 002-semantic-search: Added Python 3.11+ + ransformers, torch (MPS support), psycopg2/asyncpg, pgvector, sentence-transformers, LangGraph, FastAPI
+
+### API Bearer Authentication (2025-11-12)
+
+**Added secure Bearer token authentication for all API endpoints**:
+
+- **Security-first design**: Constant-time token comparison using `hmac.compare_digest`
+- **Strict validation**: 64+ hexadecimal characters (256-bit entropy minimum)
+- **Comprehensive logging**: Authentication events tracked without exposing token values
+- **Test coverage**: Contract, integration, unit, and concurrent auth tests
+
+**Configuration**:
+  - `API_BEARER_TOKEN`: Required environment variable (validated at startup)
+  - Generate: `openssl rand -hex 32` for 64-character token
+  - Validation: Pydantic validator enforces format and length requirements
+
+**Files Added**:
+  - `app/core/auth/`: Authentication module (bearer_token.py, dependencies.py, logging.py, models.py)
+  - `tests/contract/test_auth_contract.py`: Contract tests
+  - `tests/integration/test_auth_integration.py`: Integration tests
+  - `tests/unit/test_bearer_token.py`: Unit tests
+
+### Cloud Embedding Refactor - Multi-Provider Architecture (2025-11-12)
+
+**Refactored embedding system from `src/embeddings` to `app/embeddings` with multi-provider support**:
+
+**Architecture**:
+  - **Protocol-based design**: `EmbeddingProvider` ABC defines common interface
+  - **Factory pattern**: `EmbeddingProviderFactory` creates providers based on `EMBEDDING_PROVIDER` environment variable
+  - **Three providers**: Local (Qwen3 on MPS/CUDA/CPU), OpenRouter API, Aliyun DashScope
+  - **Unified interface**: `encode()`, `get_provider_name()` - dimension detected dynamically from embeddings
+
+**Providers**:
+  - **LocalEmbeddingProvider**: Configurable HuggingFace models (default: Qwen3-Embedding-0.6B, 1024-dim) on MPS/CUDA/CPU
+  - **OpenRouterEmbeddingProvider**: Configurable OpenRouter models (default: qwen/qwen3-embedding-0.6b, 1024-dim)
+  - **AliyunEmbeddingProvider**: Configurable Aliyun DashScope models (default: text-embedding-v4, 1024-dim dense format)
+
+**Configuration**:
+  - `EMBEDDING_PROVIDER`: "local", "openrouter", or "aliyun"
+  - `EMBEDDING_MODEL`: Model name/identifier (provider-specific format)
+  - `OPENAI_API_KEY`: Required for OpenRouter provider
+  - `ALIYUN_API_KEY`: Required for Aliyun provider
+  - `device`: Device for local provider (mps/cuda/cpu, auto-fallback)
+  - No API keys required for local provider
+
+**Benefits**:
+  - **Zero vendor lock-in**: Switch providers via environment variable
+  - **Model flexibility**: Configure models per provider via `--model` parameter
+  - **Dynamic dimensions**: No hardcoded dimensions, supports any embedding size
+  - **Cost flexibility**: Local (free, hardware-dependent) vs Cloud (pay-per-use, scalable)
+  - **Performance trade-offs**: Local (fast, requires GPU) vs Cloud (consistent, network latency)
+  - **Reliability**: Retry logic with exponential backoff, batch processing, error handling
+
+**Migration**:
+  - Eliminated: `src/embeddings/` module (encoder.py, indexer.py, cli.py, models.py)
+  - Created: `app/embeddings/` module with protocol-based design
+  - Test coverage: 56 passing tests (contract, integration, unit), 66.8% coverage for app.embeddings
+  - Type safety: mypy type checking with minimal errors
+
+**Usage**:
+```python
+from app.embeddings.factory import create_embedding_provider
+from app.config import settings
+
+# Create provider with explicit parameters from settings
+provider = create_embedding_provider(
+    provider_type=settings.embedding_provider,
+    embedding_model=settings.EMBEDDING_MODEL,  # Model name is now actually used!
+    device=settings.device,
+    batch_size=10,  # Optional, defaults to 10
+    openai_api_key=settings.openai_api_key,
+    aliyun_api_key=settings.aliyun_api_key,
+)
+
+# Unified interface across all providers
+embedding = provider.encode("test query")  # Returns np.ndarray (dimension depends on model)
+embeddings = provider.encode(["query 1", "query 2"])  # Returns List[np.ndarray]
+
+# Get dimension dynamically from actual embedding
+dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
+```
 
 ### Router-Based RAG Architecture - Classification and Routing (2025-11-13)
 
@@ -396,34 +557,28 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 
 **Enhanced retriever interface to accept conversation history for context-aware retrieval**:
 
-- **Key Change**: Retrievers now accept either `str` or `List[BaseMessage]` as query input
   - Backward compatible: existing string queries still work
   - Context-aware: pass full conversation history for better retrieval
   - Strategy-specific: each retriever decides how much history to use
 
-- **Retriever Strategy History Usage**:
   - **SimpleRetriever**: Last message only (`max_history=1`) - fast, simple
   - **RerankRetriever**: Last message only (`max_history=1`) - reranker provides semantic richness
   - **AdvancedRetriever**: Last 5 messages (`max_history=5`) - rich context for LLM query expansion
 
-- **Implementation Details**:
   - `app/retrieval/utils.py`: New utility module with `extract_query_from_messages()` and `format_message_context()`
   - `app/retrieval/base.py`: Updated `RetrieverProtocol` signature to `Union[str, List[BaseMessage]]`
   - `app/retrieval/simple.py`, `rerank.py`, `advanced.py`: Updated to use message extraction utilities
   - `app/agents/rag_agent.py`: Now passes `state["messages"]` to retriever instead of just query string
 
-- **Benefits**:
   - **Context Resolution**: Handles follow-up questions like "What about children?" with implicit context
   - **Separation of Concerns**: Retrievers encapsulate their own history needs (no longer RAG agent's responsibility)
   - **Enhanced Query Expansion**: AdvancedRetriever uses conversation context for better LLM query variations
   - **Zero Performance Impact**: Simple/Rerank strategies unchanged, Advanced adds ~100-200ms for richer context
 
-- **Testing**:
   - `tests/unit/test_retrieval_utils.py`: Comprehensive tests for utility functions
   - Verified backward compatibility with string inputs
   - Tested multi-turn conversations with context extraction
 
-- **Files Modified**:
   - Created: `app/retrieval/utils.py`, `tests/unit/test_retrieval_utils.py`
   - Updated: `app/retrieval/base.py`, `simple.py`, `rerank.py`, `advanced.py`, `app/agents/rag_agent.py`
 
@@ -431,7 +586,6 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 
 **Removed content-hash caching system and implemented simpler output-file-based skip logic**:
 
-- **Key Change**: Replaced cache_store module with output file checking
   - Check if structure.json exists → skip Phase 1 if valid
   - Check each chunk file → skip that chunk if valid (granular skip logic)
   - `--redo` flag forces reprocessing regardless of existing files

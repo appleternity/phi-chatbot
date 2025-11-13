@@ -16,10 +16,19 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-編輯 `.env` 並新增您的 OpenRouter API 金鑰：
+編輯 `.env` 並新增您的 OpenRouter API 金鑰和 API Bearer Token：
 ```
 OPENAI_API_KEY=your-key-here
+API_BEARER_TOKEN=your-secure-token-here
 ```
+
+**產生 API Bearer Token**：
+```bash
+# 產生安全的 128 字元 token（256 位元熵）
+openssl rand -hex 64
+```
+
+複製產生的 token 並貼到 `.env` 檔案中的 `API_BEARER_TOKEN` 值。
 
 ### 3. 啟動伺服器
 
@@ -41,6 +50,9 @@ uvicorn app.main:app --reload --port 8000
 
 **選項 A：網頁瀏覽器**
 - 開啟 http://localhost:8000/docs
+- 點擊右上角的 **Authorize** 按鈕（🔓 圖示）
+- 輸入您的 API token（來自 `.env` 檔案）：`Bearer your-api-token-here`
+- 點擊「Authorize」並關閉對話框
 - 在 `/chat` 端點上點擊「Try it out」
 - 使用此請求：
 ```json
@@ -53,9 +65,12 @@ uvicorn app.main:app --reload --port 8000
 **選項 B：命令列**
 ```bash
 curl -X POST http://localhost:8000/chat \
+  -H "Authorization: Bearer your-api-token-here" \
   -H "Content-Type: application/json" \
   -d '{"session_id":"test-1","message":"Sertraline 是什麼？"}'
 ```
+
+將 `your-api-token-here` 替換為您 `.env` 檔案中的實際 token。
 
 **選項 C：Python 腳本**
 ```bash
@@ -108,6 +123,22 @@ pip install -r requirements.txt
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
+
+### 驗證錯誤（401 Unauthorized）
+**錯誤**：`{"detail": "Missing Authorization header"}`
+- 確保在請求中包含 `Authorization: Bearer <token>` 標頭
+- Swagger UI：點擊 Authorize 按鈕並輸入您的 token
+- curl：新增 `-H "Authorization: Bearer your-token-here"`
+
+**錯誤**：`{"detail": "Invalid token format"}`
+- Token 必須至少為 64 個十六進位字元
+- 重新產生 token：`openssl rand -hex 32`
+- 更新 `.env` 檔案中的新 token 並重新啟動伺服器
+
+**錯誤**：啟動時出現 `{"detail": "Field required"}`
+- `.env` 檔案中缺少 `API_BEARER_TOKEN`
+- 產生 token：`openssl rand -hex 32`
+- 新增到 `.env`：`API_BEARER_TOKEN=your-generated-token`
 
 ### LLM 錯誤
 檢查您的 `.env` 檔案是否有正確的 `OPENAI_API_KEY`
