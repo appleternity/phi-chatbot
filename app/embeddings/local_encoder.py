@@ -113,7 +113,7 @@ class Qwen3EmbeddingProvider(EmbeddingProvider):
         self.model = (
             AutoModel.from_pretrained(
                 model_name,
-                dtype=torch.float32,  # MPS requires float32 (float16 not supported)
+                torch_dtype=torch.float32,  # MPS requires float32 (float16 not supported)
             )
             .to(self.device)
             .eval()
@@ -204,6 +204,8 @@ class Qwen3EmbeddingProvider(EmbeddingProvider):
         assert text_list, "texts cannot be empty"
         assert all(text and text.strip() for text in text_list), "texts contains empty or whitespace-only strings"
 
+        logger.info(f"Encoding {len(text_list)} texts with local Qwen3 provider")
+
         # Use instance batch size if not specified
         if batch_size is None:
             batch_size = self.batch_size
@@ -283,23 +285,6 @@ class Qwen3EmbeddingProvider(EmbeddingProvider):
         embedding_list = [embeddings[i] for i in range(embeddings.shape[0])]
 
         return embedding_list
-
-    def get_embedding_dimension(self) -> int:
-        """
-        Get the embedding dimension for this model.
-
-        Dynamically determines dimension by encoding a test string on first call,
-        then caches the result. Works with any embedding model.
-
-        Returns:
-            Embedding dimension size (e.g., 1024 for Qwen3-Embedding-0.6B)
-        """
-        # Cache dimension from first encoding
-        if not hasattr(self, "_embedding_dim"):
-            test_embedding = self.encode(["test"], show_progress=False)[0]
-            self._embedding_dim = len(test_embedding)
-
-        return self._embedding_dim
 
     def get_provider_name(self) -> str:
         """

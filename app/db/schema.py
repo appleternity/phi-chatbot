@@ -33,13 +33,16 @@ CREATE EXTENSION IF NOT EXISTS vector;
 """
 
 
-# SQL for creating vector_chunks table (parameterized dimension and type)
+# SQL for creating vector_chunks table (parameterized dimension, type, and table name)
 # Type selection based on dimension:
 # - vector(N): float32, dimensions 128-2000, 4 bytes/dim
 # - halfvec(N): float16, dimensions 2001-4000, 2 bytes/dim (50% space savings)
 # - vector(N): float32, dimensions >4000, use binary quantization for indexing
-CREATE_TABLE_SQL_TEMPLATE = """
-CREATE TABLE IF NOT EXISTS vector_chunks (
+# Note: Table name will be quoted to support special characters (e.g., hyphens)
+def get_create_table_sql(table_name: str, vector_type: str, dimension: int) -> str:
+    """Generate CREATE TABLE SQL with quoted table name."""
+    return f"""
+CREATE TABLE IF NOT EXISTS "{table_name}" (
     chunk_id VARCHAR(255) PRIMARY KEY,
     source_document VARCHAR(255) NOT NULL,
     chapter_title TEXT,
@@ -66,56 +69,70 @@ CREATE TABLE IF NOT EXISTS schema_metadata (
 
 
 # SQL for creating HNSW index for standard vectors (float32, ≤2000 dimensions)
-CREATE_HNSW_VECTOR_INDEX_SQL = """
+def get_hnsw_vector_index_sql(table_name: str) -> str:
+    """Generate HNSW vector index SQL with quoted table name."""
+    return f"""
 CREATE INDEX IF NOT EXISTS idx_embedding_cosine
-ON vector_chunks
+ON "{table_name}"
 USING hnsw (embedding vector_cosine_ops);
 """
 
 # SQL for creating HNSW index for half-precision vectors (float16, 2001-4000 dimensions)
-CREATE_HNSW_HALFVEC_INDEX_SQL = """
+def get_hnsw_halfvec_index_sql(table_name: str) -> str:
+    """Generate HNSW halfvec index SQL with quoted table name."""
+    return f"""
 CREATE INDEX IF NOT EXISTS idx_embedding_cosine
-ON vector_chunks
+ON "{table_name}"
 USING hnsw (embedding halfvec_cosine_ops);
 """
 
 # SQL for creating HNSW index with binary quantization (>4000 dimensions)
 # Uses expression index: binary_quantize(embedding)::bit(N)
 # Supports up to 64,000 dimensions with fast approximate search
-CREATE_BINARY_QUANTIZED_INDEX_SQL_TEMPLATE = """
+def get_binary_quantized_index_sql(table_name: str, dimension: int) -> str:
+    """Generate binary quantized index SQL with quoted table name."""
+    return f"""
 CREATE INDEX IF NOT EXISTS idx_embedding_cosine
-ON vector_chunks
+ON "{table_name}"
 USING hnsw ((binary_quantize(embedding)::bit({dimension})) bit_hamming_ops);
 """
 
 
 # SQL for creating metadata indexes
-CREATE_METADATA_INDEXES_SQL = """
+def get_metadata_indexes_sql(table_name: str) -> str:
+    """Generate metadata indexes SQL with quoted table name."""
+    return f"""
 CREATE INDEX IF NOT EXISTS idx_source_document
-ON vector_chunks(source_document);
+ON "{table_name}"(source_document);
 
 CREATE INDEX IF NOT EXISTS idx_chapter_title
-ON vector_chunks(chapter_title);
+ON "{table_name}"(chapter_title);
 """
 
 
 # SQL for dropping all indexes and table (for testing/reset)
-DROP_SCHEMA_SQL = """
+def get_drop_schema_sql(table_name: str) -> str:
+    """Generate DROP schema SQL with quoted table name."""
+    return f"""
 DROP INDEX IF EXISTS idx_embedding_cosine;
 DROP INDEX IF EXISTS idx_source_document;
 DROP INDEX IF EXISTS idx_chapter_title;
-DROP TABLE IF EXISTS vector_chunks;
+DROP TABLE IF EXISTS "{table_name}";
 """
 
 
-async def create_schema(conn: Connection, embedding_dim: int = 1024) -> None:
+async def create_schema(
+    conn: Connection,
+    embedding_dim: int = 1024,
+    table_name: str = "vector_chunks"
+) -> None:
     """
     Create database schema with intelligent vector type and index selection.
 
     This function creates:
     1. pgvector extension
     2. schema_metadata table
-    3. vector_chunks table with optimal vector type
+    3. vector table with optimal vector type and custom name
     4. HNSW index with optimal operator class
     5. Metadata indexes for filtering
 
@@ -131,6 +148,8 @@ async def create_schema(conn: Connection, embedding_dim: int = 1024) -> None:
     Args:
         conn: Active asyncpg connection
         embedding_dim: Embedding dimension (default: 1024 for Qwen3-0.6B)
+        table_name: Custom table name (default: "vector_chunks")
+                   Supports special characters (e.g., "text-embedding-v4")
 
     Raises:
         AssertionError: If embedding_dim is out of valid range
@@ -150,14 +169,14 @@ async def create_schema(conn: Connection, embedding_dim: int = 1024) -> None:
     if embedding_dim <= 2000:
         # Standard float32 vectors with HNSW index
         vector_type = "vector"
-        index_sql = CREATE_HNSW_VECTOR_INDEX_SQL
+        index_sql = get_hnsw_vector_index_sql(table_name)
         index_type = "HNSW (vector_cosine_ops)"
         storage_info = f"4 bytes/dim, {embedding_dim * 4 / 1024:.1f} KB/vector"
 
     elif embedding_dim <= 4000:
         # Half-precision float16 vectors with HNSW index (50% space savings)
         vector_type = "halfvec"
-        index_sql = CREATE_HNSW_HALFVEC_INDEX_SQL
+        index_sql = get_hnsw_halfvec_index_sql(table_name)
         index_type = "HNSW (halfvec_cosine_ops)"
         storage_info = f"2 bytes/dim, {embedding_dim * 2 / 1024:.1f} KB/vector (50% savings)"
 
@@ -165,22 +184,19 @@ async def create_schema(conn: Connection, embedding_dim: int = 1024) -> None:
         # Binary quantization for >4000 dimensions (97% space savings)
         # Note: Requires re-ranking with original vectors for best accuracy
         vector_type = "vector"
-        index_sql = CREATE_BINARY_QUANTIZED_INDEX_SQL_TEMPLATE.format(dimension=embedding_dim)
+        index_sql = get_binary_quantized_index_sql(table_name, embedding_dim)
         index_type = "HNSW (binary quantization + re-ranking)"
         storage_info = f"4 bytes/dim + bit index, {embedding_dim * 4 / 1024:.1f} KB/vector"
 
-    # Create vector_chunks table with chosen vector type
-    create_table_sql = CREATE_TABLE_SQL_TEMPLATE.format(
-        vector_type=vector_type,
-        dimension=embedding_dim
-    )
+    # Create vector table with chosen vector type and custom name
+    create_table_sql = get_create_table_sql(table_name, vector_type, embedding_dim)
     await conn.execute(create_table_sql)
 
     # Create HNSW index with chosen strategy
     await conn.execute(index_sql)
 
     # Create metadata indexes
-    await conn.execute(CREATE_METADATA_INDEXES_SQL)
+    await conn.execute(get_metadata_indexes_sql(table_name))
 
     # Store metadata for validation and query optimization
     await conn.execute(
@@ -205,20 +221,22 @@ async def create_schema(conn: Connection, embedding_dim: int = 1024) -> None:
     )
 
 
-async def drop_schema(conn: Connection) -> None:
+async def drop_schema(conn: Connection, table_name: str = "vector_chunks") -> None:
     """
     Drop all indexes and tables (for testing/reset).
 
-    WARNING: This will delete all data in the vector_chunks table.
+    WARNING: This will delete all data in the specified table.
     Use only for testing or when you want to completely reset the database.
 
     Args:
         conn: Active asyncpg connection
+        table_name: Table name to drop (default: "vector_chunks")
 
     Raises:
         asyncpg.PostgresError: If schema drop fails
     """
-    await conn.execute(DROP_SCHEMA_SQL)
+    drop_sql = get_drop_schema_sql(table_name)
+    await conn.execute(drop_sql)
 
 
 async def create_database_if_needed(

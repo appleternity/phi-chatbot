@@ -27,17 +27,17 @@ class TestAliyunAuthentication:
 
         assert provider.client is not None
         assert provider.model == "text-embedding-v4"
-        assert provider.dimension == 1024
-        assert provider.batch_size == 100
+        assert provider.dimensions == 1024  # Note: dimensions (plural) not dimension
+        assert provider.batch_size == 10  # Default batch size is 10 for Aliyun (rate limits)
 
     def test_invalid_api_key_raises_error(self):
-        """T053: Invalid/empty API key should raise ValueError."""
-        # Empty API key should raise ValueError
-        with pytest.raises(ValueError, match="Aliyun API key is required"):
+        """T053: Invalid/empty API key should raise AssertionError."""
+        # Empty API key should raise AssertionError (our code uses assert)
+        with pytest.raises(AssertionError, match="Aliyun API key is required"):
             AliyunEmbeddingProvider(api_key="")
 
-        # None API key should raise ValueError
-        with pytest.raises(ValueError, match="Aliyun API key is required"):
+        # None API key also raises AssertionError (assert checks truthiness)
+        with pytest.raises(AssertionError, match="Aliyun API key is required"):
             AliyunEmbeddingProvider(api_key=None)
 
     @patch("app.embeddings.aliyun_provider.openai.OpenAI")
@@ -54,11 +54,11 @@ class TestAliyunAuthentication:
 
         provider = AliyunEmbeddingProvider(api_key="sk-aliyun-invalid-key")
 
-        # Should raise RuntimeError (wrapping AuthenticationError) without retrying
-        with pytest.raises(RuntimeError, match="Aliyun embedding generation failed"):
+        # Should raise AuthenticationError directly (client errors aren't retried)
+        with pytest.raises(AuthenticationError, match="Invalid API key"):
             provider.encode("test authentication")
 
-        # Verify only called once (no retries for 401)
+        # Verify only called once (no retries for 401 - client errors fail immediately)
         assert mock_client.embeddings.create.call_count == 1
 
 
@@ -90,14 +90,14 @@ class TestAliyunDenseEmbeddingFormat:
         assert embedding.shape == (1024,)
 
     @patch("app.embeddings.aliyun_provider.openai.OpenAI")
-    def test_get_embedding_dimension_returns_1024(self, mock_openai_class):
-        """T054: get_embedding_dimension() should return 1024 for dense format."""
+    def test_dimensions_attribute_is_1024_by_default(self, mock_openai_class):
+        """T054: dimensions attribute should be 1024 by default for dense format."""
         mock_openai_class.return_value = MagicMock()
 
         provider = AliyunEmbeddingProvider(api_key="sk-aliyun-valid-key")
 
-        # Should return 1024 for dense embedding format
-        assert provider.get_embedding_dimension() == 1024
+        # Check dimensions attribute (plural)
+        assert provider.dimensions == 1024
 
 
 class TestAliyunBatchProcessing:

@@ -80,9 +80,9 @@ async def lifespan(app: FastAPI):
     )
 
     # Get document count
-    # Security: table_name validated by Pydantic validator (whitelist + regex)
-    # PostgreSQL doesn't support parameterized identifiers, so f-string is safe here
-    doc_count = await pool.fetchval(f"SELECT COUNT(*) FROM {settings.table_name}")
+    # Security: table_name quoted to support special characters (e.g., hyphens)
+    # PostgreSQL doesn't support parameterized identifiers, so quoted f-string is safe
+    doc_count = await pool.fetchval(f'SELECT COUNT(*) FROM "{settings.table_name}"')
     logger.info(f"📊 Database contains {doc_count} indexed chunks")
 
     assert doc_count > 0, (
@@ -97,6 +97,7 @@ async def lifespan(app: FastAPI):
         provider_type=settings.embedding_provider,
         embedding_model=settings.EMBEDDING_MODEL,
         device=settings.device,
+        batch_size=settings.batch_size,
         openai_api_key=settings.openai_api_key,
         aliyun_api_key=settings.aliyun_api_key
     )
@@ -135,12 +136,13 @@ async def lifespan(app: FastAPI):
         logger.info(f"Reranker not needed for '{settings.RETRIEVAL_STRATEGY}' strategy")
 
     # 5. Create retriever with explicit strategy parameter
-    logger.info(f"Creating retriever (strategy: {settings.RETRIEVAL_STRATEGY})...")
+    logger.info(f"Creating retriever (strategy: {settings.RETRIEVAL_STRATEGY}, table: {settings.table_name})...")
     retriever = create_retriever(
         strategy=settings.RETRIEVAL_STRATEGY,
         pool=pool,
         encoder=encoder,
-        reranker=reranker
+        reranker=reranker,
+        table_name=settings.table_name
     )
     app.state.retriever = retriever
     logger.info("✅ Retriever initialized")

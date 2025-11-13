@@ -17,37 +17,50 @@ logger = logging.getLogger(__name__)
 
 class OpenRouterEmbeddingProvider(EmbeddingProvider):
     """
-    OpenRouter API embedding provider using Qwen3-Embedding-0.6B.
+    OpenRouter API embedding provider with configurable model support.
 
-    This provider calls OpenRouter's API to generate 1024-dimensional embeddings
-    using the qwen/qwen3-embedding-0.6b model.
+    This provider calls OpenRouter's API to generate embeddings using
+    configurable embedding models.
 
     API Configuration:
         - Base URL: https://openrouter.ai/api/v1
-        - Model: qwen/qwen3-embedding-0.6b
-        - Dimension: 1024 (fixed)
+        - Model: Configurable (default: qwen/qwen3-embedding-0.6b)
         - Batch size: 100 texts per request
 
     Args:
         api_key: OpenRouter API key (required)
+        model: Model identifier on OpenRouter (default: qwen/qwen3-embedding-0.6b)
         batch_size: Maximum texts per batch (default: 100)
 
     Example:
+        >>> # Use default Qwen3 model
         >>> provider = OpenRouterEmbeddingProvider(api_key="sk-or-...")
         >>> embedding = provider.encode("What are side effects?")
-        >>> embedding.shape
-        (1024,)
+        >>> len(embedding)  # Dimension depends on model (Qwen3: 1024)
+        1024
+
+        >>> # Use custom model
+        >>> provider = OpenRouterEmbeddingProvider(
+        ...     api_key="sk-or-...",
+        ...     model="custom/embedding-model"
+        ... )
         >>> embeddings = provider.encode(["Text 1", "Text 2"])
         >>> len(embeddings)
         2
     """
 
-    def __init__(self, api_key: str, batch_size: int = 100):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "qwen/qwen3-embedding-0.6b",
+        batch_size: int = 100
+    ):
         """
         Initialize OpenRouter embedding provider.
 
         Args:
             api_key: OpenRouter API key (required)
+            model: Model identifier on OpenRouter (default: qwen/qwen3-embedding-0.6b)
             batch_size: Maximum texts per batch (default: 100)
 
         Raises:
@@ -60,13 +73,12 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
         )
+        self.model = model
         self.batch_size = batch_size
-        self.model = "qwen/qwen3-embedding-0.6b"
-        self.dimension = 1024
 
         logger.info(
             f"Initialized OpenRouter provider: model={self.model}, "
-            f"dimension={self.dimension}, batch_size={self.batch_size}"
+            f"batch_size={self.batch_size}"
         )
 
     def encode(self, texts: Union[str, List[str]]) -> Union[np.ndarray, List[np.ndarray]]:
@@ -103,6 +115,8 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
         # Validate all texts are non-empty strings
         for i, text in enumerate(text_list):
             assert isinstance(text, str) and text.strip(), f"Text at index {i} is empty or not a string"
+
+        logger.info(f"Encoding {len(text_list)} texts with OpenRouter provider")
 
         # Batch processing - split into chunks of batch_size
         all_embeddings = []
@@ -158,19 +172,6 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
         )
 
         return embeddings
-
-    def get_embedding_dimension(self) -> int:
-        """
-        Get the embedding dimension for this provider.
-
-        Returns:
-            Embedding dimension size (1024)
-
-        Example:
-            >>> provider.get_embedding_dimension()
-            1024
-        """
-        return self.dimension
 
     def get_provider_name(self) -> str:
         """

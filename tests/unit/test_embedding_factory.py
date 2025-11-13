@@ -39,7 +39,8 @@ class TestFactoryProviderCreation:
         # Verify correct provider type
         assert isinstance(provider, Qwen3EmbeddingProvider)
         assert provider.get_provider_name() == "qwen3_local"
-        assert provider.get_embedding_dimension() == 1024
+
+        # Note: Cannot test dimension with mocked model (mock doesn't return proper array)
 
     def test_factory_returns_openrouter_provider_for_openrouter(self):
         """T064: Factory should return OpenRouterEmbeddingProvider for 'openrouter'."""
@@ -59,11 +60,12 @@ class TestFactoryProviderCreation:
         # Verify correct provider type
         assert isinstance(provider, OpenRouterEmbeddingProvider)
         assert provider.get_provider_name() == "openrouter"
-        assert provider.get_embedding_dimension() == 1024
 
         # Verify OpenRouter-specific configuration
-        assert provider.model == "qwen/qwen3-embedding-0.6b"
-        assert provider.batch_size == 100
+        # Model now comes from settings.EMBEDDING_MODEL (Qwen/Qwen3-Embedding-0.6B)
+        assert provider.model == "Qwen/Qwen3-Embedding-0.6B"
+        # Batch size comes from factory default (10) since not explicitly specified
+        assert provider.batch_size == 10
 
     def test_factory_returns_aliyun_provider_for_aliyun(self):
         """T065: Factory should return AliyunEmbeddingProvider for 'aliyun'."""
@@ -84,11 +86,14 @@ class TestFactoryProviderCreation:
         # Verify correct provider type
         assert isinstance(provider, AliyunEmbeddingProvider)
         assert provider.get_provider_name() == "aliyun"
-        assert provider.get_embedding_dimension() == 1024
 
         # Verify Aliyun-specific configuration
-        assert provider.model == "text-embedding-v4"
-        assert provider.batch_size == 100
+        # Model now comes from settings.EMBEDDING_MODEL (Qwen/Qwen3-Embedding-0.6B)
+        assert provider.model == "Qwen/Qwen3-Embedding-0.6B"
+        # Dimensions configurable (defaults to 1024)
+        assert provider.dimensions == 1024
+        # Batch size defaults to 10 for Aliyun (rate limits)
+        assert provider.batch_size == 10
 
 
 class TestFactoryErrorHandling:
@@ -185,11 +190,13 @@ class TestFactoryConfigurationPropagation:
         assert isinstance(provider, Qwen3EmbeddingProvider)
 
     def test_factory_uses_correct_batch_size_for_openrouter(self):
-        """Factory should use batch_size=100 for OpenRouter provider."""
+        """Factory should propagate batch_size parameter to OpenRouter provider."""
+        # Test with explicit batch_size
         provider = create_embedding_provider(
             provider_type="openrouter",
             embedding_model="Qwen/Qwen3-Embedding-0.6B",
             device="mps",
+            batch_size=100,  # Explicitly pass 100
             openai_api_key="sk-or-key",
             aliyun_api_key=""
         )
@@ -197,16 +204,18 @@ class TestFactoryConfigurationPropagation:
         assert provider.batch_size == 100
 
     def test_factory_uses_correct_batch_size_for_aliyun(self):
-        """Factory should use batch_size=100 for Aliyun provider."""
+        """Factory should propagate batch_size parameter to Aliyun provider."""
+        # Test with explicit batch_size
         provider = create_embedding_provider(
             provider_type="aliyun",
             embedding_model="Qwen/Qwen3-Embedding-0.6B",
             device="mps",
+            batch_size=25,  # Explicitly pass custom batch size
             openai_api_key="sk-test-key",
             aliyun_api_key="sk-aliyun-key"
         )
 
-        assert provider.batch_size == 100
+        assert provider.batch_size == 25
 
     def test_factory_creates_new_instance_each_call(self):
         """Factory should create new provider instance each time."""

@@ -15,8 +15,8 @@ from unittest.mock import Mock, patch, MagicMock
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.embeddings.factory import EmbeddingProviderFactory
-from app.embeddings.local_encoder import LocalEmbeddingProvider
+from app.embeddings.factory import create_embedding_provider
+from app.embeddings import LocalEmbeddingProvider
 from app.embeddings.openrouter_provider import OpenRouterEmbeddingProvider
 from app.embeddings.aliyun_provider import AliyunEmbeddingProvider
 
@@ -24,15 +24,15 @@ from app.embeddings.aliyun_provider import AliyunEmbeddingProvider
 class TestProviderSwitching:
     """T056-T057: Test configuration changes between providers."""
 
-    @patch("app.embeddings.local_encoder.LocalEmbeddingProvider.validate_dimension")
-    @patch("app.embeddings.openrouter_provider.OpenRouterEmbeddingProvider.validate_dimension")
-    @patch("app.embeddings.local_encoder.Qwen3EmbeddingEncoder")
+    @patch("app.embeddings.local_encoder.AutoModel")
+    @patch("app.embeddings.local_encoder.AutoTokenizer")
+    @patch("app.embeddings.openrouter_provider.openai.OpenAI")
     @patch.dict(
         "os.environ",
         {"EMBEDDING_PROVIDER": "local", "OPENAI_API_KEY": "sk-test-key", "EMBEDDING_DIM": "1024"},
     )
     def test_switch_from_local_to_openrouter(
-        self, mock_encoder, mock_or_validate, mock_local_validate
+        self, mock_or_client, mock_tokenizer, mock_model
     ):
         """T056: Config change from local to openrouter should create OpenRouter provider."""
         # Start with local provider
@@ -40,11 +40,17 @@ class TestProviderSwitching:
             embedding_provider="local", openai_api_key="sk-test-key", embedding_dim=1024
         )
 
-        provider_local = EmbeddingProviderFactory.create_provider(settings_local)
+        provider_local = create_embedding_provider(
+            provider_type=settings_local.embedding_provider,
+            embedding_model=settings_local.EMBEDDING_MODEL,
+            device=settings_local.device,
+            openai_api_key=settings_local.openai_api_key,
+            aliyun_api_key=settings_local.aliyun_api_key,
+        )
 
         # Verify local provider created
         assert isinstance(provider_local, LocalEmbeddingProvider)
-        assert provider_local.get_provider_name() == "local_qwen3"
+        assert provider_local.get_provider_name() == "qwen3_local"
 
         # Switch to openrouter provider
         settings_openrouter = Settings(
@@ -53,15 +59,22 @@ class TestProviderSwitching:
             embedding_dim=1024,
         )
 
-        provider_openrouter = EmbeddingProviderFactory.create_provider(settings_openrouter)
+        provider_openrouter = create_embedding_provider(
+            provider_type=settings_openrouter.embedding_provider,
+            embedding_model=settings_openrouter.EMBEDDING_MODEL,
+            device=settings_openrouter.device,
+            openai_api_key=settings_openrouter.openai_api_key,
+            aliyun_api_key=settings_openrouter.aliyun_api_key,
+        )
 
         # Verify openrouter provider created
         assert isinstance(provider_openrouter, OpenRouterEmbeddingProvider)
         assert provider_openrouter.get_provider_name() == "openrouter"
-        assert provider_openrouter.get_embedding_dimension() == 1024
+        # No get_embedding_dimension() method anymore - check model instead
+        assert provider_openrouter.model == "Qwen/Qwen3-Embedding-0.6B"
 
-    @patch("app.embeddings.openrouter_provider.OpenRouterEmbeddingProvider.validate_dimension")
-    @patch("app.embeddings.aliyun_provider.AliyunEmbeddingProvider.validate_dimension")
+    @patch("app.embeddings.openrouter_provider.openai.OpenAI")
+    @patch("app.embeddings.aliyun_provider.openai.OpenAI")
     @patch.dict(
         "os.environ",
         {
@@ -70,7 +83,7 @@ class TestProviderSwitching:
             "EMBEDDING_DIM": "1024",
         },
     )
-    def test_switch_from_openrouter_to_aliyun(self, mock_aliyun_validate, mock_or_validate):
+    def test_switch_from_openrouter_to_aliyun(self, mock_aliyun_client, mock_or_client):
         """T057: Config change from openrouter to aliyun should create Aliyun provider."""
         # Start with openrouter provider
         settings_openrouter = Settings(
@@ -80,7 +93,13 @@ class TestProviderSwitching:
             embedding_dim=1024,
         )
 
-        provider_openrouter = EmbeddingProviderFactory.create_provider(settings_openrouter)
+        provider_openrouter = create_embedding_provider(
+            provider_type=settings_openrouter.embedding_provider,
+            embedding_model=settings_openrouter.EMBEDDING_MODEL,
+            device=settings_openrouter.device,
+            openai_api_key=settings_openrouter.openai_api_key,
+            aliyun_api_key=settings_openrouter.aliyun_api_key,
+        )
 
         # Verify openrouter provider created
         assert isinstance(provider_openrouter, OpenRouterEmbeddingProvider)
@@ -94,22 +113,30 @@ class TestProviderSwitching:
             embedding_dim=1024,
         )
 
-        provider_aliyun = EmbeddingProviderFactory.create_provider(settings_aliyun)
+        provider_aliyun = create_embedding_provider(
+            provider_type=settings_aliyun.embedding_provider,
+            embedding_model=settings_aliyun.EMBEDDING_MODEL,
+            device=settings_aliyun.device,
+            openai_api_key=settings_aliyun.openai_api_key,
+            aliyun_api_key=settings_aliyun.aliyun_api_key,
+        )
 
         # Verify aliyun provider created
         assert isinstance(provider_aliyun, AliyunEmbeddingProvider)
         assert provider_aliyun.get_provider_name() == "aliyun"
-        assert provider_aliyun.get_embedding_dimension() == 1024
+        # No get_embedding_dimension() method anymore - check model and dimensions
+        assert provider_aliyun.model == "Qwen/Qwen3-Embedding-0.6B"
+        assert provider_aliyun.dimensions == 1024
 
-    @patch("app.embeddings.local_encoder.LocalEmbeddingProvider.validate_dimension")
-    @patch("app.embeddings.aliyun_provider.AliyunEmbeddingProvider.validate_dimension")
-    @patch("app.embeddings.local_encoder.Qwen3EmbeddingEncoder")
+    @patch("app.embeddings.local_encoder.AutoModel")
+    @patch("app.embeddings.local_encoder.AutoTokenizer")
+    @patch("app.embeddings.aliyun_provider.openai.OpenAI")
     @patch.dict(
         "os.environ",
         {"EMBEDDING_PROVIDER": "local", "OPENAI_API_KEY": "sk-test-key", "EMBEDDING_DIM": "1024"},
     )
     def test_switch_from_aliyun_to_local(
-        self, mock_encoder, mock_aliyun_validate, mock_local_validate
+        self, mock_aliyun_client, mock_tokenizer, mock_model
     ):
         """T056-T057: Config change from aliyun to local should create Local provider."""
         # Start with aliyun provider
@@ -120,7 +147,13 @@ class TestProviderSwitching:
             embedding_dim=1024,
         )
 
-        provider_aliyun = EmbeddingProviderFactory.create_provider(settings_aliyun)
+        provider_aliyun = create_embedding_provider(
+            provider_type=settings_aliyun.embedding_provider,
+            embedding_model=settings_aliyun.EMBEDDING_MODEL,
+            device=settings_aliyun.device,
+            openai_api_key=settings_aliyun.openai_api_key,
+            aliyun_api_key=settings_aliyun.aliyun_api_key,
+        )
 
         # Verify aliyun provider created
         assert isinstance(provider_aliyun, AliyunEmbeddingProvider)
@@ -133,11 +166,17 @@ class TestProviderSwitching:
             embedding_dim=1024,
         )
 
-        provider_local = EmbeddingProviderFactory.create_provider(settings_local)
+        provider_local = create_embedding_provider(
+            provider_type=settings_local.embedding_provider,
+            embedding_model=settings_local.EMBEDDING_MODEL,
+            device=settings_local.device,
+            openai_api_key=settings_local.openai_api_key,
+            aliyun_api_key=settings_local.aliyun_api_key,
+        )
 
         # Verify local provider created
         assert isinstance(provider_local, LocalEmbeddingProvider)
-        assert provider_local.get_provider_name() == "local_qwen3"
+        assert provider_local.get_provider_name() == "qwen3_local"
 
 
 class TestInvalidProviderConfiguration:
@@ -195,9 +234,15 @@ class TestInvalidProviderConfiguration:
             embedding_dim=1024,
         )
 
-        # Factory should raise ValueError when creating provider
-        with pytest.raises(ValueError, match="OpenRouter API key required"):
-            EmbeddingProviderFactory.create_provider(settings)
+        # Factory should raise AssertionError when creating provider
+        with pytest.raises(AssertionError, match="OpenRouter API key required"):
+            create_embedding_provider(
+                provider_type=settings.embedding_provider,
+                embedding_model=settings.EMBEDDING_MODEL,
+                device=settings.device,
+                openai_api_key=settings.openai_api_key,
+                aliyun_api_key=settings.aliyun_api_key,
+            )
 
     @patch.dict(
         "os.environ",
@@ -213,16 +258,23 @@ class TestInvalidProviderConfiguration:
             embedding_dim=1024,
         )
 
-        # Factory should raise ValueError when creating provider
-        with pytest.raises(ValueError, match="Aliyun API key required"):
-            EmbeddingProviderFactory.create_provider(settings)
+        # Factory should raise AssertionError when creating provider
+        with pytest.raises(AssertionError, match="Aliyun API key required"):
+            create_embedding_provider(
+                provider_type=settings.embedding_provider,
+                embedding_model=settings.EMBEDDING_MODEL,
+                device=settings.device,
+                openai_api_key=settings.openai_api_key,
+                aliyun_api_key=settings.aliyun_api_key,
+            )
 
-    @patch("app.embeddings.local_encoder.Qwen3EmbeddingEncoder")
+    @patch("app.embeddings.local_encoder.AutoModel")
+    @patch("app.embeddings.local_encoder.AutoTokenizer")
     @patch.dict(
         "os.environ",
         {"EMBEDDING_PROVIDER": "local", "OPENAI_API_KEY": "sk-test-key", "EMBEDDING_DIM": "1024"},
     )
-    def test_startup_with_local_provider_no_api_key_needed(self, mock_encoder):
+    def test_startup_with_local_provider_no_api_key_needed(self, mock_tokenizer, mock_model):
         """T059: Local provider should not require cloud API keys."""
         # Create settings with local provider
         settings = Settings(
@@ -233,15 +285,22 @@ class TestInvalidProviderConfiguration:
         )
 
         # Factory should succeed (no cloud API keys needed)
-        provider = EmbeddingProviderFactory.create_provider(settings)
+        provider = create_embedding_provider(
+            provider_type=settings.embedding_provider,
+            embedding_model=settings.EMBEDDING_MODEL,
+            device=settings.device,
+            openai_api_key=settings.openai_api_key,
+            aliyun_api_key=settings.aliyun_api_key,
+        )
 
         # Verify local provider created
         assert isinstance(provider, LocalEmbeddingProvider)
-        assert provider.get_provider_name() == "local_qwen3"
+        assert provider.get_provider_name() == "qwen3_local"
 
-    @patch("app.embeddings.local_encoder.LocalEmbeddingProvider.validate_dimension")
-    @patch("app.embeddings.openrouter_provider.OpenRouterEmbeddingProvider.validate_dimension")
-    @patch("app.embeddings.aliyun_provider.AliyunEmbeddingProvider.validate_dimension")
+    @patch("app.embeddings.local_encoder.AutoModel")
+    @patch("app.embeddings.local_encoder.AutoTokenizer")
+    @patch("app.embeddings.openrouter_provider.openai.OpenAI")
+    @patch("app.embeddings.aliyun_provider.openai.OpenAI")
     @patch.dict(
         "os.environ",
         {
@@ -251,24 +310,39 @@ class TestInvalidProviderConfiguration:
         },
     )
     def test_multiple_provider_switches_in_sequence(
-        self, mock_aliyun_validate, mock_or_validate, mock_local_validate
+        self, mock_aliyun_client, mock_or_client, mock_tokenizer, mock_model
     ):
         """T056-T059: Multiple sequential provider switches should work correctly."""
         # Switch sequence: local → openrouter → aliyun → local
         providers = []
 
         # 1. Local provider
-        with patch("app.embeddings.local_encoder.Qwen3EmbeddingEncoder"):
-            settings_local = Settings(
-                embedding_provider="local", openai_api_key="sk-test-key", embedding_dim=1024
+        settings_local = Settings(
+            embedding_provider="local", openai_api_key="sk-test-key", embedding_dim=1024
+        )
+        providers.append(
+            create_embedding_provider(
+                provider_type=settings_local.embedding_provider,
+                embedding_model=settings_local.EMBEDDING_MODEL,
+                device=settings_local.device,
+                openai_api_key=settings_local.openai_api_key,
+                aliyun_api_key=settings_local.aliyun_api_key,
             )
-            providers.append(EmbeddingProviderFactory.create_provider(settings_local))
+        )
 
         # 2. OpenRouter provider
         settings_openrouter = Settings(
             embedding_provider="openrouter", openai_api_key="sk-or-key", embedding_dim=1024
         )
-        providers.append(EmbeddingProviderFactory.create_provider(settings_openrouter))
+        providers.append(
+            create_embedding_provider(
+                provider_type=settings_openrouter.embedding_provider,
+                embedding_model=settings_openrouter.EMBEDDING_MODEL,
+                device=settings_openrouter.device,
+                openai_api_key=settings_openrouter.openai_api_key,
+                aliyun_api_key=settings_openrouter.aliyun_api_key,
+            )
+        )
 
         # 3. Aliyun provider
         settings_aliyun = Settings(
@@ -277,14 +351,29 @@ class TestInvalidProviderConfiguration:
             aliyun_api_key="sk-aliyun-key",
             embedding_dim=1024,
         )
-        providers.append(EmbeddingProviderFactory.create_provider(settings_aliyun))
+        providers.append(
+            create_embedding_provider(
+                provider_type=settings_aliyun.embedding_provider,
+                embedding_model=settings_aliyun.EMBEDDING_MODEL,
+                device=settings_aliyun.device,
+                openai_api_key=settings_aliyun.openai_api_key,
+                aliyun_api_key=settings_aliyun.aliyun_api_key,
+            )
+        )
 
         # 4. Back to local provider
-        with patch("app.embeddings.local_encoder.Qwen3EmbeddingEncoder"):
-            settings_local2 = Settings(
-                embedding_provider="local", openai_api_key="sk-test-key", embedding_dim=1024
+        settings_local2 = Settings(
+            embedding_provider="local", openai_api_key="sk-test-key", embedding_dim=1024
+        )
+        providers.append(
+            create_embedding_provider(
+                provider_type=settings_local2.embedding_provider,
+                embedding_model=settings_local2.EMBEDDING_MODEL,
+                device=settings_local2.device,
+                openai_api_key=settings_local2.openai_api_key,
+                aliyun_api_key=settings_local2.aliyun_api_key,
             )
-            providers.append(EmbeddingProviderFactory.create_provider(settings_local2))
+        )
 
         # Verify all providers created correctly
         assert isinstance(providers[0], LocalEmbeddingProvider)
@@ -293,7 +382,7 @@ class TestInvalidProviderConfiguration:
         assert isinstance(providers[3], LocalEmbeddingProvider)
 
         # Verify provider names
-        assert providers[0].get_provider_name() == "local_qwen3"
+        assert providers[0].get_provider_name() == "qwen3_local"
         assert providers[1].get_provider_name() == "openrouter"
         assert providers[2].get_provider_name() == "aliyun"
-        assert providers[3].get_provider_name() == "local_qwen3"
+        assert providers[3].get_provider_name() == "qwen3_local"

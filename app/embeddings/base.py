@@ -50,27 +50,12 @@ class EmbeddingProvider(ABC):
             >>> embeddings = provider.encode(["Text 1", "Text 2"])
             >>> len(embeddings)
             2
+
+        Note:
+            To get embedding dimension, simply check the length of the returned array:
+            >>> embedding = provider.encode("test")
+            >>> dimension = len(embedding)
         """
-        pass
-
-    @abstractmethod
-    def get_embedding_dimension(self) -> int:
-        """
-        Get the embedding dimension for this provider.
-
-        Dimension depends on model:
-        - Qwen3-Embedding-0.6B: 1024
-        - Aliyun text-embedding-v4: 1024
-
-        Returns:
-            Embedding dimension size
-
-        Example:
-            >>> provider.get_embedding_dimension()
-            1024
-        """
-        # TODO: we probably don't need this function? Where did we use it?
-        # TODO: it is hardcoded values and I don't think those values make sense if we change the model.
         pass
 
     @abstractmethod

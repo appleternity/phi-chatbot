@@ -21,6 +21,7 @@ from typing import AsyncIterator
 from datetime import datetime
 import asyncio
 import logging
+import time
 
 from app.models import (
     ChatStreamRequest,
@@ -37,6 +38,7 @@ from app.utils.session_helpers import (
     build_graph_config,
     persist_session_updates
 )
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -100,24 +102,34 @@ async def stream_chat_events(
     model_handler = ModelStreamHandler()
 
     try:
-        # Timeout wrapper (FR-014: 30-second timeout)
-        async with asyncio.timeout(30):
-            # Build graph state using shared utility
-            state = build_graph_state(request.message, session_id, session_data)
+        # Build graph state using shared utility
+        state = build_graph_state(request.message, session_id, session_data)
 
-            # Build graph config using shared utility
-            config = build_graph_config(session_id)
+        # Build graph config using shared utility
+        config = build_graph_config(session_id)
 
-            # Invoke LangGraph with stream modes
-            # stream_mode=["messages", "custom"] captures:
-            # - "messages": LLM token streaming (token-by-token from user-facing LLMs)
-            # - "custom": Custom events from get_stream_writer() (stage transitions + metadata)
-            # Note: Internal LLM calls (supervisor, query expansion) use .invoke() so don't appear in stream
-            async for mode, chunk in graph.astream(
-                state,
-                config=config,
-                stream_mode=["messages", "custom"]
-            ):
+        # Idle timeout tracking (FR-014: timeout on stream inactivity, not total execution time)
+        # Note: This allows long-running queries as long as events keep arriving
+        idle_timeout_seconds = settings.stream_idle_timeout
+        events_emitted = 0
+
+        # Manually iterate over the LangGraph stream so we can wrap each await with the idle timeout
+        stream_iter = graph.astream(
+            state,
+            config=config,
+            stream_mode=["messages", "custom"]
+        ).__aiter__()
+        try:
+            while True:
+                try:
+                    # Enforce idle-timeout while awaiting the next chunk; handler work is unrestricted
+                    mode, chunk = await asyncio.wait_for(
+                        stream_iter.__anext__(),
+                        timeout=idle_timeout_seconds
+                    )
+                except StopAsyncIteration:
+                    break
+
                 # Check client disconnect at each iteration (FR-019)
                 if await request_obj.is_disconnected():
                     logger.info(f"Client disconnected: session={request.session_id}")
@@ -131,11 +143,17 @@ async def stream_chat_events(
                 if mode == "custom":
                     async for sse_event in custom_handler.handle_custom(chunk, session):
                         yield sse_event.to_sse_format()
+                        events_emitted += 1
                 elif mode == "messages":
                     # chunk is a tuple: (message, metadata)
                     message_chunk, metadata = chunk
                     async for sse_event in model_handler.handle_message(message_chunk, metadata, session):
                         yield sse_event.to_sse_format()
+                        events_emitted += 1
+        finally:
+            aclose = getattr(stream_iter, "aclose", None)
+            if aclose:
+                await aclose()
 
         # Stream completed successfully (FR-011)
         session.mark_completed()
@@ -163,18 +181,54 @@ async def stream_chat_events(
         yield create_done_event().to_sse_format()
 
     except asyncio.TimeoutError:
-        # Timeout handling (FR-014)
-        logger.warning(f"Stream timeout: session={request.session_id}")
-        session.mark_error("Request timeout")
+        # Idle timeout handling (FR-014)
+        # Raised when no chunks received within idle_timeout_seconds while awaiting stream
+        total_duration = time.time() - session.start_time
+        logger.warning(
+            f"Stream idle timeout: session={session_id}, "
+            f"idle_duration={idle_timeout_seconds:.1f}s, "
+            f"total_duration={total_duration:.1f}s, "
+            f"events_emitted={events_emitted}, "
+            f"current_stage={session.current_stage or 'unknown'}"
+        )
+        session.mark_error(f"No stream activity for {idle_timeout_seconds}s")
+
+        # Persist session before timeout error (preserve conversation context)
+        await persist_session_updates(
+            session_id,
+            session_data,
+            assigned_agent=session_data.assigned_agent,
+            metadata=session_data.metadata,
+            session_store=session_store
+        )
+
         yield create_error_event(
-            "Request timed out after 30 seconds",
-            "TIMEOUT_ERROR"
+            f"Stream idle timeout after {idle_timeout_seconds}s of inactivity",
+            "IDLE_TIMEOUT"
         ).to_sse_format()
 
     except asyncio.CancelledError:
         # Client cancelled (stop button) - FR-018, FR-019
         logger.info(f"Stream cancelled by client: session={request.session_id}")
         session.mark_cancelled()
+
+        # Persist session to preserve conversation context (user message)
+        # This ensures user doesn't lose their question on cancellation
+        # Note: Partial assistant response is intentionally discarded for clean state
+        await persist_session_updates(
+            session_id,
+            session_data,
+            assigned_agent=session_data.assigned_agent,
+            metadata=session_data.metadata,
+            session_store=session_store
+        )
+
+        # Send cancelled event to frontend BEFORE re-raising
+        # Critical: Both yield AND raise are required:
+        # - yield: Sends SSE event to frontend for "Request cancelled" UI (not generic network error)
+        # - raise: Propagates cancellation to FastAPI for proper resource cleanup
+        # Without yield: Frontend sees connection error instead of cancellation
+        # Without raise: FastAPI resources leak, violates asyncio cancellation protocol
         yield create_cancelled_event().to_sse_format()
         raise  # Must re-raise for proper FastAPI cleanup
 
@@ -182,6 +236,24 @@ async def stream_chat_events(
         # Unexpected backend error
         logger.exception(f"Unexpected stream error: session={request.session_id}")
         session.mark_error(str(e))
+
+        # Best-effort session persistence to preserve conversation context
+        # Use try/except since error might be database-related
+        try:
+            await persist_session_updates(
+                session_id,
+                session_data,
+                assigned_agent=session_data.assigned_agent,
+                metadata=session_data.metadata,
+                session_store=session_store
+            )
+        except Exception as persist_error:
+            # Log persistence failure but don't let it mask original error
+            logger.warning(
+                f"Failed to persist session on error: session={session_id}, "
+                f"persist_error={persist_error}"
+            )
+
         # Don't expose internal error details to frontend
         yield create_error_event(
             "An unexpected error occurred",

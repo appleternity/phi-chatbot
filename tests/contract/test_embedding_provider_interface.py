@@ -81,48 +81,6 @@ class TestEncodeMethodSignature:
         assert callable(getattr(provider, "encode")), "encode() must be callable"
 
 
-# T027: Contract test - All providers return 1024-dim embeddings
-class TestEmbeddingDimension:
-    """Verify all providers return 1024-dimensional embeddings."""
-
-    def test_local_provider_dimension(self):
-        """T027: Qwen3EmbeddingProvider must return 1024-dim embeddings."""
-        from unittest.mock import patch
-
-        # Mock model loading to avoid HuggingFace downloads in contract tests
-        with patch("app.embeddings.local_encoder.AutoModel"), \
-             patch("app.embeddings.local_encoder.AutoTokenizer"):
-            provider = Qwen3EmbeddingProvider(
-                model_name="Qwen/Qwen3-Embedding-0.6B", device="cpu", max_length=1024
-            )
-
-            assert (
-                provider.get_embedding_dimension() == 1024
-            ), "Qwen3EmbeddingProvider must return 1024-dimensional embeddings"
-
-    def test_openrouter_provider_dimension(self):
-        """T027: OpenRouterEmbeddingProvider must return 1024-dim embeddings."""
-        # This will fail until OpenRouterEmbeddingProvider is implemented
-        from app.embeddings.openrouter_provider import OpenRouterEmbeddingProvider
-
-        provider = OpenRouterEmbeddingProvider(api_key="test-key")
-
-        assert (
-            provider.get_embedding_dimension() == 1024
-        ), "OpenRouterEmbeddingProvider must return 1024-dimensional embeddings"
-
-    def test_aliyun_provider_dimension(self):
-        """T027: AliyunEmbeddingProvider must return 1024-dim embeddings."""
-        # This will fail until AliyunEmbeddingProvider is implemented
-        from app.embeddings.aliyun_provider import AliyunEmbeddingProvider
-
-        provider = AliyunEmbeddingProvider(api_key="test-key")
-
-        assert (
-            provider.get_embedding_dimension() == 1024
-        ), "AliyunEmbeddingProvider must return 1024-dimensional embeddings"
-
-
 # T028: Contract test - Provider names match specification
 class TestProviderNames:
     """Verify provider names match specification."""

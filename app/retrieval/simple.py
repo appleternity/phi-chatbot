@@ -26,23 +26,27 @@ class SimpleRetriever:
     Attributes:
         pool: Database connection pool
         encoder: Embedding provider (local/cloud)
+        table_name: Vector table name (supports special characters)
     """
 
     def __init__(
         self,
         pool: DatabasePool,
         encoder: EmbeddingProvider,
+        table_name: str = "vector_chunks",
     ):
         """Initialize simple retriever.
 
         Args:
             pool: Initialized database pool
             encoder: Initialized embedding encoder
+            table_name: Table name (default: "vector_chunks")
         """
         self.pool = pool
         self.encoder = encoder
+        self.table_name = table_name
 
-        logger.info("SimpleRetriever initialized (no reranking)")
+        logger.info(f"SimpleRetriever initialized (table={table_name}, no reranking)")
 
     async def search(
         self,
@@ -114,7 +118,7 @@ class SimpleRetriever:
         Returns:
             Tuple of (sql_query, parameters)
         """
-        sql = """
+        sql = f"""
         SELECT
             chunk_id,
             chunk_text,
@@ -125,7 +129,7 @@ class SimpleRetriever:
             summary,
             token_count,
             1 - (embedding <=> $1) AS similarity_score
-        FROM vector_chunks
+        FROM "{self.table_name}"
         """
 
         params = [embedding]

@@ -40,6 +40,8 @@ from datetime import datetime
 import typer
 import pandas as pd
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
 from rich.panel import Panel
@@ -67,16 +69,16 @@ console = Console()
 app = typer.Typer(
     name="generate-embeddings",
     help="Generate embeddings and save to Parquet (Stage 1 of 2)",
-    add_completion=False,
+    pretty_exceptions_show_locals=False,
 )
 
 
 def load_chunks_from_directory(input_dir: Path) -> List[Dict[str, Any]]:
     """
-    Load all chunk JSON files from directory.
+    Load all chunk JSON files from directory (searches recursively).
 
     Args:
-        input_dir: Directory containing chunk JSON files
+        input_dir: Directory containing chunk JSON files (may be in subdirectories)
 
     Returns:
         List of chunk dictionaries
@@ -88,9 +90,9 @@ def load_chunks_from_directory(input_dir: Path) -> List[Dict[str, Any]]:
     assert input_path.exists(), f"Input directory not found: {input_path}"
     assert input_path.is_dir(), f"Input path is not a directory: {input_path}"
 
-    # Find all chunk JSON files
-    chunk_files = sorted(input_path.glob("*_chunk_*.json"))
-    assert len(chunk_files) > 0, f"No chunk files found in {input_path}"
+    # Find all chunk JSON files (search recursively with **)
+    chunk_files = sorted(input_path.glob("**/*_chunk*.json"))
+    assert len(chunk_files) > 0, f"No chunk files found in {input_path} (searched recursively)"
 
     console.print(f"[cyan]📂 Found {len(chunk_files)} chunk files in {input_dir}[/cyan]")
 
@@ -99,14 +101,20 @@ def load_chunks_from_directory(input_dir: Path) -> List[Dict[str, Any]]:
     for chunk_file in chunk_files:
         with open(chunk_file, "r", encoding="utf-8") as f:
             chunk_data = json.load(f)
+            # Store the filename for debugging
+            chunk_data["_source_file"] = str(chunk_file)
             chunks.append(chunk_data)
 
     # Validate required fields
     required_fields = {"chunk_id", "source_document", "chunk_text"}
     for i, chunk in enumerate(chunks):
         missing_fields = required_fields - set(chunk.keys())
-        assert not missing_fields, \
-            f"Chunk {i} missing required fields: {missing_fields}"
+        if missing_fields:
+            source_file = chunk.get("_source_file", "unknown")
+            console.print(f"[red]❌ Error in file: {source_file}[/red]")
+            console.print(f"[red]   Available fields: {list(chunk.keys())}[/red]")
+            assert False, \
+                f"Chunk {i} (file: {source_file}) missing required fields: {missing_fields}"
 
     console.print(f"[green]✅ Loaded {len(chunks)} chunks successfully[/green]")
     return chunks
@@ -269,9 +277,6 @@ def save_to_parquet(
     )
 
     # Add metadata to Parquet file using pyarrow
-    import pyarrow.parquet as pq
-    import pyarrow as pa
-
     # Read back the file
     table = pq.read_table(output_path)
 
@@ -292,32 +297,29 @@ def save_to_parquet(
 @app.command()
 def generate(
     input: Annotated[Path, typer.Option(
-        ...,
         help="Input directory containing chunk JSON files",
         exists=True,
         file_okay=False,
         dir_okay=True,
     )],
     output: Annotated[Path, typer.Option(
-        ...,
         help="Output Parquet file path",
     )],
     provider: Annotated[str, typer.Option(
-        "local",
         help="Embedding provider: local, openrouter, aliyun",
-    )],
+    )] = "local",
     model: Annotated[str, typer.Option(
-        "Qwen/Qwen3-Embedding-0.6B",
         help="Model name/identifier",
-    )],
+    )] = "Qwen/Qwen3-Embedding-0.6B",
     device: Annotated[str, typer.Option(
-        "mps",
         help="Device for local provider: mps, cuda, cpu",
-    )],
+    )] = "mps",
     batch_size: Annotated[int, typer.Option(
-        16,
         help="Batch size for embedding generation",
-    )],
+    )] = 10,
+    limit: Annotated[int | None, typer.Option(
+        help="Limit number of chunks to process (for testing)",
+    )] = None,
 ) -> None:
     """
     Generate embeddings for all chunks and save to Parquet file.
@@ -358,6 +360,10 @@ def generate(
         # Load chunks
         chunks = load_chunks_from_directory(input)
 
+        if limit is not None:
+            chunks = chunks[:limit]
+            console.print(f"[yellow]⚠️  Limiting to first {limit} chunks for testing[/yellow]")
+
         # Load settings for API keys (if needed)
         settings = Settings()
 
@@ -366,12 +372,18 @@ def generate(
             provider_type=provider,
             embedding_model=model,
             device=device,
+            batch_size=batch_size,
             openai_api_key=settings.openai_api_key,
             aliyun_api_key=settings.aliyun_api_key
         )
 
         console.print(f"[cyan]🤖 Provider: {embedding_provider.get_provider_name()}[/cyan]")
-        console.print(f"[cyan]📏 Dimension: {embedding_provider.get_embedding_dimension()}[/cyan]")
+
+        # Detect dimension dynamically from first encoding
+        console.print(f"[dim]   Detecting embedding dimension...[/dim]")
+        test_embedding = embedding_provider.encode("test")
+        embedding_dim = len(test_embedding)
+        console.print(f"[cyan]📏 Dimension: {embedding_dim}[/cyan]")
 
         # Generate embeddings
         df = generate_embeddings_batch(chunks, embedding_provider, batch_size)
@@ -388,7 +400,7 @@ def generate(
         summary_table.add_row("📂 Input chunks:", str(len(chunks)))
         summary_table.add_row("📊 Embeddings generated:", str(len(df)))
         summary_table.add_row("💾 Output file:", str(output))
-        summary_table.add_row("📏 Embedding dimension:", str(embedding_provider.get_embedding_dimension()))
+        summary_table.add_row("📏 Embedding dimension:", str(embedding_dim))
 
         console.print(summary_table)
         console.print("\n[cyan]Next step: Ingest to database[/cyan]")

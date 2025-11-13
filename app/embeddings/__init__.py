@@ -9,7 +9,7 @@ from app.embeddings.base import EmbeddingProvider
 from app.embeddings.local_encoder import Qwen3EmbeddingProvider
 from app.embeddings.openrouter_provider import OpenRouterEmbeddingProvider
 from app.embeddings.aliyun_provider import AliyunEmbeddingProvider
-from app.embeddings.factory import create_embedding_provider, EmbeddingProviderFactory
+from app.embeddings.factory import create_embedding_provider
 from app.embeddings.utils import retry_with_backoff
 
 # Backward compatibility alias
@@ -22,6 +22,5 @@ __all__ = [
     "OpenRouterEmbeddingProvider",
     "AliyunEmbeddingProvider",
     "create_embedding_provider",
-    "EmbeddingProviderFactory",
     "retry_with_backoff",
 ]

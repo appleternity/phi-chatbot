@@ -20,6 +20,7 @@ def create_retriever(
     pool: DatabasePool,
     encoder: EmbeddingProvider,
     reranker: Qwen3Reranker | None = None,
+    table_name: str = "vector_chunks",
 ) -> SimpleRetriever | RerankRetriever | AdvancedRetriever:
     """Create retriever with explicit strategy parameter.
 
@@ -36,6 +37,7 @@ def create_retriever(
         pool: Initialized database pool
         encoder: Initialized embedding encoder
         reranker: Initialized reranker (required for "rerank" and "advanced")
+        table_name: Table name (default: "vector_chunks")
 
     Returns:
         Configured retriever instance
@@ -50,17 +52,18 @@ def create_retriever(
         ...     strategy="advanced",
         ...     pool=pool,
         ...     encoder=encoder,
-        ...     reranker=reranker
+        ...     reranker=reranker,
+        ...     table_name="text-embedding-v4"
         ... )
         >>> results = await retriever.search("aripiprazole side effects")
     """
     strategy = strategy.lower()
 
-    logger.info(f"Creating retriever with strategy: {strategy}")
+    logger.info(f"Creating retriever with strategy: {strategy}, table: {table_name}")
 
     if strategy == "simple":
         # No reranking needed
-        return SimpleRetriever(pool=pool, encoder=encoder)
+        return SimpleRetriever(pool=pool, encoder=encoder, table_name=table_name)
 
     elif strategy == "rerank":
         # Requires reranker
@@ -68,7 +71,7 @@ def create_retriever(
             "Reranker required for 'rerank' strategy. "
             "Initialize Qwen3Reranker and pass to factory."
         )
-        return RerankRetriever(pool=pool, encoder=encoder, reranker=reranker)
+        return RerankRetriever(pool=pool, encoder=encoder, reranker=reranker, table_name=table_name)
 
     elif strategy == "advanced":
         # Requires reranker for final stage
@@ -76,7 +79,7 @@ def create_retriever(
             "Reranker required for 'advanced' strategy. "
             "Initialize Qwen3Reranker and pass to factory."
         )
-        return AdvancedRetriever(pool=pool, encoder=encoder, reranker=reranker)
+        return AdvancedRetriever(pool=pool, encoder=encoder, reranker=reranker, table_name=table_name)
 
     else:
         raise ValueError(

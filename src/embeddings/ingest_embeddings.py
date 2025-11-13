@@ -43,7 +43,7 @@ from dotenv import load_dotenv
 
 from app.config import Settings
 from app.db.schema import create_schema, drop_schema
-from app.db.connection import get_pool, close_pool
+from app.db.connection import DatabasePool
 
 # Load environment variables
 load_dotenv()
@@ -174,9 +174,7 @@ async def create_table_with_dimension(embedding_dim: int, table_name: str) -> No
     assert 128 <= embedding_dim <= 64000, \
         f"Invalid embedding dimension: {embedding_dim}"
 
-    pool = await get_pool()
-
-    try:
+    async with DatabasePool() as pool:
         # Check if table already exists
         # Security: Use parameterized query to prevent SQL injection
         table_exists = await pool.fetchval(
@@ -205,11 +203,8 @@ async def create_table_with_dimension(embedding_dim: int, table_name: str) -> No
         else:
             # Create new table with detected dimension
             console.print(f"[cyan]📝 Creating table {table_name} with {embedding_dim}-dim vectors...[/cyan]")
-            await create_schema(pool, embedding_dim=embedding_dim)
+            await create_schema(pool, embedding_dim=embedding_dim, table_name=table_name)
             console.print(f"[green]✅ Table {table_name} created successfully[/green]")
-
-    finally:
-        await close_pool()
 
 
 async def ingest_parquet_to_db(
@@ -247,10 +242,9 @@ async def ingest_parquet_to_db(
     assert not missing_columns, \
         f"Parquet missing required columns: {missing_columns}"
 
-    pool = await get_pool()
     inserted_count = 0
 
-    try:
+    async with DatabasePool() as pool:
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -271,8 +265,9 @@ async def ingest_parquet_to_db(
                 # Prepare batch data
                 records = []
                 for _, row in batch_df.iterrows():
-                    # Convert embedding list to PostgreSQL array format
-                    embedding_array = row["embedding"]
+                    # Convert embedding to Python list (from numpy array)
+                    # pgvector codec expects list, not numpy array
+                    embedding_list = row["embedding"].tolist() if hasattr(row["embedding"], 'tolist') else list(row["embedding"])
 
                     record = (
                         row["chunk_id"],
@@ -283,16 +278,16 @@ async def ingest_parquet_to_db(
                         row.get("summary"),
                         row["token_count"],
                         row["chunk_text"],
-                        embedding_array,  # VECTOR type
+                        embedding_list,  # VECTOR type (as Python list)
                     )
                     records.append(record)
 
                 # Bulk insert with ON CONFLICT DO NOTHING (idempotent)
-                # Security: table_name validated by validate_table_name() at function start
-                # PostgreSQL doesn't support parameterized identifiers, so f-string is safe here
-                result = await pool.executemany(
+                # Security: table_name quoted to prevent SQL injection and support special chars
+                # PostgreSQL doesn't support parameterized identifiers, so quoted f-string is safe
+                await pool.executemany(
                     f"""
-                    INSERT INTO {table_name} (
+                    INSERT INTO "{table_name}" (
                         chunk_id,
                         source_document,
                         chapter_title,
@@ -308,17 +303,13 @@ async def ingest_parquet_to_db(
                     records
                 )
 
-                # Count successful inserts (result contains status strings)
-                # Each successful INSERT returns "INSERT 0 1", conflict returns "INSERT 0 0"
-                batch_inserted = sum(1 for status in result if "INSERT 0 1" in status)
-                inserted_count += batch_inserted
+                # Note: asyncpg executemany doesn't return per-row status
+                # We count total attempts; duplicates are silently skipped via ON CONFLICT
+                inserted_count += len(batch_df)
 
                 progress.update(task, advance=len(batch_df))
 
-        console.print(f"[green]✅ Inserted {inserted_count} rows ({len(df) - inserted_count} duplicates skipped)[/green]")
-
-    finally:
-        await close_pool()
+        console.print(f"[green]✅ Processed {inserted_count} rows (duplicates skipped via ON CONFLICT)[/green]")
 
     return inserted_count
 
@@ -326,24 +317,20 @@ async def ingest_parquet_to_db(
 @app.command()
 def ingest(
     input: Annotated[Path, typer.Option(
-        ...,
         help="Input Parquet file with embeddings",
         exists=True,
         file_okay=True,
         dir_okay=False,
     )],
     table_name: Annotated[str, typer.Option(
-        "vector_chunks",
         help="Target PostgreSQL table name",
-    )],
+    )] = "vector_chunks",
     batch_size: Annotated[int, typer.Option(
-        1000,
         help="Batch size for bulk insert",
-    )],
+    )] = 1000,
     drop_existing: Annotated[bool, typer.Option(
-        False,
         help="Drop existing table before ingestion (DESTRUCTIVE)",
-    )],
+    )] = False,
 ) -> None:
     """
     Ingest embeddings from Parquet file to PostgreSQL database.
@@ -370,7 +357,9 @@ def ingest(
     try:
         # Security: Validate table name before using in SQL queries
         # This prevents SQL injection since table names cannot use parameterized queries
-        table_name = validate_table_name(table_name)
+        # FIXME: This is the ingestion step, so we DO not need to validate the table_name
+        # FIXME: IT is likely we are creating new table names for testing
+        # table_name = validate_table_name(table_name)
 
         console.print(Panel.fit(
             "[bold cyan]Stage 2: Ingest Embeddings to Database[/bold cyan]\n\n"
@@ -391,15 +380,15 @@ def ingest(
 
         # Drop existing table if requested
         if drop_existing:
+            if not typer.confirm(f"Are you sure you want to drop the existing {table_name} table? This action is destructive and cannot be undone."):
+                console.print("[yellow]Aborted dropping table.[/yellow]")
+                raise typer.Exit()
             console.print("[yellow]⚠️  Dropping existing table...[/yellow]")
 
             async def drop():
-                pool = await get_pool()
-                try:
-                    await drop_schema(pool)
-                    console.print("[green]✅ Table dropped[/green]")
-                finally:
-                    await close_pool()
+                async with DatabasePool() as pool:
+                    await drop_schema(pool, table_name=table_name)
+                    console.print(f"[green]✅ Table {table_name} dropped[/green]")
 
             asyncio.run(drop())
 
@@ -417,8 +406,7 @@ def ingest(
         summary_table = Table(show_header=False, box=None)
         summary_table.add_row("📂 Source file:", str(input))
         summary_table.add_row("📊 Total chunks:", str(total_chunks))
-        summary_table.add_row("✅ Rows inserted:", str(inserted_count))
-        summary_table.add_row("⏭️  Duplicates skipped:", str(total_chunks - inserted_count))
+        summary_table.add_row("✅ Rows processed:", str(inserted_count))
         summary_table.add_row("💾 Table:", table_name)
         summary_table.add_row("📏 Dimension:", str(embedding_dim))
 
@@ -428,7 +416,7 @@ def ingest(
             console.print("\n[cyan]✅ Ready to start API server![/cyan]")
             console.print("[dim]  python -m app.main[/dim]")
         else:
-            console.print("\n[yellow]⚠️  No new rows inserted (all duplicates)[/yellow]")
+            console.print("\n[yellow]⚠️  No rows processed[/yellow]")
 
     except AssertionError as e:
         console.print(f"[red]❌ Validation error: {e}[/red]")

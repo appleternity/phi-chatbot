@@ -36,6 +36,7 @@ class RerankRetriever:
         pool: DatabasePool,
         encoder: EmbeddingProvider,
         reranker: Qwen3Reranker,
+        table_name: str = "vector_chunks",
     ):
         """Initialize rerank retriever.
 
@@ -43,12 +44,14 @@ class RerankRetriever:
             pool: Initialized database pool
             encoder: Initialized embedding encoder
             reranker: Initialized reranker model
+            table_name: Table name (default: "vector_chunks")
         """
         self.pool = pool
         self.encoder = encoder
         self.reranker = reranker
+        self.table_name = table_name
 
-        logger.info("RerankRetriever initialized (two-stage retrieval)")
+        logger.info(f"RerankRetriever initialized (table={table_name}, two-stage retrieval)")
 
     async def search(
         self,
@@ -137,7 +140,7 @@ class RerankRetriever:
         filters: Optional[Dict[str, Any]] = None
     ) -> tuple[str, List[Any]]:
         """Build SQL query (same as SimpleRetriever)."""
-        sql = """
+        sql = f"""
         SELECT
             chunk_id,
             chunk_text,
@@ -148,7 +151,7 @@ class RerankRetriever:
             summary,
             token_count,
             1 - (embedding <=> $1) AS similarity_score
-        FROM vector_chunks
+        FROM "{self.table_name}"
         """
 
         params = [embedding]

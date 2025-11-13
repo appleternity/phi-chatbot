@@ -23,6 +23,7 @@ def create_embedding_provider(
     provider_type: str,
     embedding_model: str,
     device: str,
+    batch_size: int = 10,
     openai_api_key: str = "",
     aliyun_api_key: str = ""
 ) -> EmbeddingProvider:
@@ -34,8 +35,12 @@ def create_embedding_provider(
 
     Args:
         provider_type: Provider type ("local", "openrouter", "aliyun")
-        embedding_model: Model name (e.g., "Qwen/Qwen3-Embedding-0.6B")
+        embedding_model: Model name/identifier
+            - Local: HuggingFace model ID (e.g., "Qwen/Qwen3-Embedding-0.6B")
+            - OpenRouter: Model path (e.g., "qwen/qwen3-embedding-0.6b")
+            - Aliyun: Model name (e.g., "text-embedding-v4")
         device: Device for local provider ("mps", "cuda", "cpu")
+        batch_size: Batch size for processing (default: 10)
         openai_api_key: API key for OpenRouter (required if provider_type="openrouter")
         aliyun_api_key: API key for Aliyun (required if provider_type="aliyun")
 
@@ -48,10 +53,17 @@ def create_embedding_provider(
 
     Example:
         >>> from app.embeddings.factory import create_embedding_provider
+        >>> # Local provider
         >>> provider = create_embedding_provider(
         ...     provider_type="local",
         ...     embedding_model="Qwen/Qwen3-Embedding-0.6B",
         ...     device="mps"
+        ... )
+        >>> # OpenRouter provider with custom model
+        >>> provider = create_embedding_provider(
+        ...     provider_type="openrouter",
+        ...     embedding_model="custom/embedding-model",
+        ...     openai_api_key="sk-or-..."
         ... )
         >>> embeddings = provider.encode("test query")
     """
@@ -66,7 +78,7 @@ def create_embedding_provider(
         provider = Qwen3EmbeddingProvider(
             model_name=embedding_model,
             device=device,  # Use configured device (auto-fallback to CUDA/CPU if unavailable)
-            batch_size=4,  # Default batch size
+            batch_size=batch_size,
             normalize_embeddings=True,
         )
 
@@ -80,10 +92,11 @@ def create_embedding_provider(
 
         provider = OpenRouterEmbeddingProvider(
             api_key=openai_api_key,
-            batch_size=10,  # OpenRouter API batch size
+            model=embedding_model,  # User-specified model (e.g., qwen/qwen3-embedding-0.6b)
+            batch_size=batch_size,
         )
 
-        logger.info("OpenRouter provider initialized: model=qwen/qwen3-embedding-0.6b")
+        logger.info(f"OpenRouter provider initialized: model={embedding_model}")
 
     elif provider_type == "aliyun":
         assert aliyun_api_key, \
@@ -91,10 +104,11 @@ def create_embedding_provider(
 
         provider = AliyunEmbeddingProvider(
             api_key=aliyun_api_key,
-            batch_size=10,  # Aliyun API batch size
+            model=embedding_model,  # User-specified model (e.g., text-embedding-v4)
+            batch_size=batch_size,
         )
 
-        logger.info("Aliyun provider initialized: model=text-embedding-v4")
+        logger.info(f"Aliyun provider initialized: model={embedding_model}")
 
     else:
         # Should never reach here due to config validation, but defensive check
@@ -103,40 +117,3 @@ def create_embedding_provider(
             f"Valid options: 'local', 'openrouter', 'aliyun'"
 
     return provider
-
-
-class EmbeddingProviderFactory:
-    """
-    Factory class for creating embedding providers.
-
-    This class wraps the create_embedding_provider function for backward compatibility
-    with tests that expect a class-based factory pattern.
-    """
-
-    @staticmethod
-    def create_provider(settings: "Settings") -> EmbeddingProvider:
-        """
-        Create embedding provider from settings object.
-
-        Args:
-            settings: Application settings with provider configuration
-
-        Returns:
-            Configured embedding provider instance
-
-        Raises:
-            AssertionError: If provider_type is invalid or required API keys missing
-            Exception: If provider initialization fails (propagates naturally)
-
-        Example:
-            >>> from app.config import settings
-            >>> from app.embeddings.factory import EmbeddingProviderFactory
-            >>> provider = EmbeddingProviderFactory.create_provider(settings)
-        """
-        return create_embedding_provider(
-            provider_type=settings.embedding_provider,
-            embedding_model=settings.EMBEDDING_MODEL,
-            device=settings.device,
-            openai_api_key=settings.openai_api_key,
-            aliyun_api_key=settings.aliyun_api_key,
-        )

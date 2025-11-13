@@ -17,38 +17,56 @@ logger = logging.getLogger(__name__)
 
 class AliyunEmbeddingProvider(EmbeddingProvider):
     """
-    Aliyun DashScope embedding provider using text-embedding-v4.
+    Aliyun DashScope embedding provider with configurable model support.
 
-    This provider calls Aliyun DashScope API to generate 1024-dimensional embeddings
-    using the text-embedding-v4 model with dense output format.
+    This provider calls Aliyun DashScope API to generate embeddings using
+    configurable embedding models with explicit dimension control.
 
     API Configuration:
-        - Base URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-        - Model: text-embedding-v4
-        - Dimension: 1024 (dense format)
-        - Batch size: 100 texts per request
+        - Base URL: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+        - Model: Configurable (default: text-embedding-v4)
+        - Dimensions: Configurable (default: 1024 for dense format)
+        - Batch size: 10 texts per request (Aliyun rate limits)
 
     Args:
         api_key: Aliyun DashScope API key (required)
-        batch_size: Maximum texts per batch (default: 100)
+        model: Model identifier on Aliyun DashScope (default: text-embedding-v4)
+        dimensions: Embedding dimension size (default: 1024)
+        batch_size: Maximum texts per batch (default: 10)
 
     Example:
+        >>> # Use default text-embedding-v4 model with 1024 dimensions
         >>> provider = AliyunEmbeddingProvider(api_key="sk-...")
         >>> embedding = provider.encode("What are side effects?")
-        >>> embedding.shape
-        (1024,)
+        >>> len(embedding)
+        1024
+
+        >>> # Use custom dimensions (if supported by model)
+        >>> provider = AliyunEmbeddingProvider(
+        ...     api_key="sk-...",
+        ...     model="text-embedding-v4",
+        ...     dimensions=768
+        ... )
         >>> embeddings = provider.encode(["Text 1", "Text 2"])
         >>> len(embeddings)
         2
     """
 
-    def __init__(self, api_key: str, batch_size: int = 100):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "text-embedding-v4",
+        dimensions: int = 1024,
+        batch_size: int = 10
+    ):
         """
         Initialize Aliyun embedding provider.
 
         Args:
             api_key: Aliyun DashScope API key (required)
-            batch_size: Maximum texts per batch (default: 100)
+            model: Model identifier on Aliyun DashScope (default: text-embedding-v4)
+            dimensions: Embedding dimension size (default: 1024)
+            batch_size: Maximum texts per batch (default: 10)
 
         Raises:
             AssertionError: If api_key is empty or None
@@ -57,16 +75,16 @@ class AliyunEmbeddingProvider(EmbeddingProvider):
 
         # Initialize OpenAI client with custom base_url for Aliyun
         self.client = openai.OpenAI(
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             api_key=api_key,
         )
+        self.model = model
+        self.dimensions = dimensions
         self.batch_size = batch_size
-        self.model = "text-embedding-v4"
-        self.dimension = 1024
 
         logger.info(
             f"Initialized Aliyun provider: model={self.model}, "
-            f"dimension={self.dimension}, batch_size={self.batch_size}"
+            f"dimensions={self.dimensions}, batch_size={self.batch_size}"
         )
 
     def encode(self, texts: Union[str, List[str]]) -> Union[np.ndarray, List[np.ndarray]]:
@@ -104,6 +122,8 @@ class AliyunEmbeddingProvider(EmbeddingProvider):
         for i, text in enumerate(text_list):
             assert isinstance(text, str) and text.strip(), f"Text at index {i} is empty or not a string"
 
+        logger.info(f"Encoding {len(text_list)} texts with Aliyun provider")
+
         # Batch processing - split into chunks of batch_size
         all_embeddings = []
         for i in range(0, len(text_list), self.batch_size):
@@ -136,11 +156,11 @@ class AliyunEmbeddingProvider(EmbeddingProvider):
         start_time = time.time()
 
         def api_call() -> openai.types.CreateEmbeddingResponse:
-            # Call Aliyun embeddings API with text-embedding-v4 and dimensions=1024
+            # Call Aliyun embeddings API with text-embedding-v4 and dimensions parameter
             response = self.client.embeddings.create(
                 model=self.model,
                 input=texts,
-                dimensions=1024,  # Dense embedding format
+                dimensions=self.dimensions
             )
             return response
 
@@ -159,19 +179,6 @@ class AliyunEmbeddingProvider(EmbeddingProvider):
         )
 
         return embeddings
-
-    def get_embedding_dimension(self) -> int:
-        """
-        Get the embedding dimension for this provider.
-
-        Returns:
-            Embedding dimension size (1024)
-
-        Example:
-            >>> provider.get_embedding_dimension()
-            1024
-        """
-        return self.dimension
 
     def get_provider_name(self) -> str:
         """

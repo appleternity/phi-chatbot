@@ -289,21 +289,19 @@ python -m src.embeddings.cli version
 ```python
 import asyncio
 from app.core.postgres_retriever import PostgreSQLRetriever
-from app.db.connection import get_pool, close_pool
+from app.db.connection import DatabasePool
 
 async def test_search():
-    pool = await get_pool()
-    retriever = PostgreSQLRetriever(pool)
+    async with DatabasePool() as pool:
+        retriever = PostgreSQLRetriever(pool)
 
-    # Search with reranking (default)
-    results = await retriever.search("aripiprazole mechanism of action", top_k=5)
+        # Search with reranking (default)
+        results = await retriever.search("aripiprazole mechanism of action", top_k=5)
 
-    for i, doc in enumerate(results, 1):
-        print(f"\n{i}. {doc.metadata['chunk_id']}")
-        print(f"   Score: {doc.metadata['rerank_score']:.4f}")
-        print(f"   Content: {doc.content[:200]}...")
-
-    await close_pool()
+        for i, doc in enumerate(results, 1):
+            print(f"\n{i}. {doc.metadata['chunk_id']}")
+            print(f"   Score: {doc.metadata['rerank_score']:.4f}")
+            print(f"   Content: {doc.content[:200]}...")
 
 asyncio.run(test_search())
 ```
@@ -359,24 +357,28 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 **Refactored embedding system from `src/embeddings` to `app/embeddings` with multi-provider support**:
 
 **Architecture**:
-  - **Protocol-based design**: `EmbeddingProvider` protocol defines common interface
+  - **Protocol-based design**: `EmbeddingProvider` ABC defines common interface
   - **Factory pattern**: `EmbeddingProviderFactory` creates providers based on `EMBEDDING_PROVIDER` environment variable
   - **Three providers**: Local (Qwen3 on MPS/CUDA/CPU), OpenRouter API, Aliyun DashScope
-  - **Unified interface**: `encode()`, `get_embedding_dimension()`, `get_provider_name()`, `validate_dimension()`
+  - **Unified interface**: `encode()`, `get_provider_name()` - dimension detected dynamically from embeddings
 
 **Providers**:
-  - **LocalEmbeddingProvider**: Qwen3-Embedding-0.6B running on MPS/CUDA/CPU (1024-dim)
-  - **OpenRouterEmbeddingProvider**: OpenRouter API with qwen/qwen3-embedding-0.6b model (1024-dim)
-  - **AliyunEmbeddingProvider**: Aliyun DashScope text-embedding-v4 model (1024-dim dense format)
+  - **LocalEmbeddingProvider**: Configurable HuggingFace models (default: Qwen3-Embedding-0.6B, 1024-dim) on MPS/CUDA/CPU
+  - **OpenRouterEmbeddingProvider**: Configurable OpenRouter models (default: qwen/qwen3-embedding-0.6b, 1024-dim)
+  - **AliyunEmbeddingProvider**: Configurable Aliyun DashScope models (default: text-embedding-v4, 1024-dim dense format)
 
 **Configuration**:
   - `EMBEDDING_PROVIDER`: "local", "openrouter", or "aliyun"
+  - `EMBEDDING_MODEL`: Model name/identifier (provider-specific format)
   - `OPENAI_API_KEY`: Required for OpenRouter provider
   - `ALIYUN_API_KEY`: Required for Aliyun provider
+  - `device`: Device for local provider (mps/cuda/cpu, auto-fallback)
   - No API keys required for local provider
 
 **Benefits**:
   - **Zero vendor lock-in**: Switch providers via environment variable
+  - **Model flexibility**: Configure models per provider via `--model` parameter
+  - **Dynamic dimensions**: No hardcoded dimensions, supports any embedding size
   - **Cost flexibility**: Local (free, hardware-dependent) vs Cloud (pay-per-use, scalable)
   - **Performance trade-offs**: Local (fast, requires GPU) vs Cloud (consistent, network latency)
   - **Reliability**: Retry logic with exponential backoff, batch processing, error handling
@@ -389,15 +391,25 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 
 **Usage**:
 ```python
-from app.embeddings.factory import EmbeddingProviderFactory
+from app.embeddings.factory import create_embedding_provider
 from app.config import settings
 
-# Auto-selects provider based on EMBEDDING_PROVIDER env var
-provider = EmbeddingProviderFactory.create_provider(settings)
+# Create provider with explicit parameters from settings
+provider = create_embedding_provider(
+    provider_type=settings.embedding_provider,
+    embedding_model=settings.EMBEDDING_MODEL,  # Model name is now actually used!
+    device=settings.device,
+    batch_size=10,  # Optional, defaults to 10
+    openai_api_key=settings.openai_api_key,
+    aliyun_api_key=settings.aliyun_api_key,
+)
 
 # Unified interface across all providers
-embedding = provider.encode("test query")  # Returns (1024,) np.ndarray
+embedding = provider.encode("test query")  # Returns np.ndarray (dimension depends on model)
 embeddings = provider.encode(["query 1", "query 2"])  # Returns List[np.ndarray]
+
+# Get dimension dynamically from actual embedding
+dimension = len(embedding)  # No hardcoded get_embedding_dimension() method!
 ```
 
 ### History-Aware Retrieval - Conversation Context for Retrievers (2025-11-06)
