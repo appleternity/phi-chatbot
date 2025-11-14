@@ -27,10 +27,24 @@ export default function ChatWindow({
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [currentCommentText, setCurrentCommentText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+
+  // Check if user has scrolled away from bottom
+  const handleScroll = () => {
+    if (messagesContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+      const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+      setIsNearBottom(distanceFromBottom < 100); // 100px threshold
+    }
+  };
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [history]);
+    // Only auto-scroll if user is near the bottom
+    if (isNearBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [history, isNearBottom]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +85,11 @@ export default function ChatWindow({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 p-6 space-y-4 overflow-y-auto">
+      <div
+        ref={messagesContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 p-6 space-y-4 overflow-y-auto"
+      >
         {history.map((msg) => (
           <div key={msg.id} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
             <div className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -129,10 +147,10 @@ export default function ChatWindow({
 
             {/* Display existing comment */}
             {msg.comment && editingCommentId !== msg.id && (
-                <div className={`mt-2 p-2 rounded-lg text-xs max-w-lg shadow-sm border ml-10 bg-gray-100 text-gray-700 border-gray-200}`}>
-                    <p className="font-semibold mb-1">Feedback:</p>
-                    <p className="text-gray-800 italic">{msg.comment}</p>
-                </div>
+              <div className={`mt-2 p-2 rounded-lg text-xs max-w-lg shadow-sm border ml-10 bg-gray-100 text-gray-700 border-gray-200}`}>
+                <p className="font-semibold mb-1">Feedback:</p>
+                <p className="text-gray-800 italic">{msg.comment}</p>
+              </div>
             )}
 
             {editingCommentId === msg.id && (
