@@ -10,6 +10,7 @@ router = APIRouter(tags=["Auth"])
 
 @router.post("/register")
 def register(req: RegisterRequest, db: Session = Depends(get_db)):
+    # TODO: We will need to also comment out this route when deploying
     existing = db.query(User).filter_by(username=req.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists.")

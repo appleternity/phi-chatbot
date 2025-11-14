@@ -14,6 +14,7 @@ from db.models import Message
 from core.config import settings
 from prompts import BOT_PROMPTS
 
+# TODO: Import this from settings will make it easier to track all env variables
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 router = APIRouter()
@@ -23,6 +24,7 @@ async def chat_endpoint(user_data: UserMessage,
                         current_user: str = Depends(get_current_user), 
                         db: Session = Depends(get_db)):
     """Send user's message to OpenRouter and return the model's response."""
+    # TODO: Let's probably disable (comment out) this if we are using streaming only.
     user_id = current_user  # use authenticated user's ID instead of request body
     if user_data:
         print(f"[User {user_id}] to [{user_data.bot_id}]: {user_data.message}")
@@ -147,6 +149,7 @@ async def chat_stream(user_data: UserMessage,
 
     ENDINGS = ["|", "\n\n", "\n"] #["。", "！", "？", ".", "!", "?", "…", "～", "\n\n", "\n"]
 
+    # TODO: I was trying to reduce the nested levels (not sure if it is possible)
     async def event_generator():
         buffer = ""
         sentence_buffer = ""
@@ -240,6 +243,7 @@ def feedback(req: FeedbackRequest,
              current_user: str = Depends(get_current_user),
              db: Session = Depends(get_db)):
     """Store feedback for a specific bot message."""
+    # TODO: should also filter by user_id to prevent cross-user feedback
     user_id = current_user
     message = db.query(Message).filter_by(id=req.message_id).first()
     if message:
@@ -258,6 +262,8 @@ def get_chat_history(user_id: str = Depends(get_current_user), db: Session = Dep
     """
     Get chat history for a specific user.
     """
+    # TODO: Not sure if this is needed but we might consider adding pagination to prevent large data loads
+    # TODO: This will required modification on the frontend as well so probably no need to do it now
     try:
         messages = (
             db.query(Message)
@@ -271,6 +277,8 @@ def get_chat_history(user_id: str = Depends(get_current_user), db: Session = Dep
 
     print(f"Fetched chat history for user: {user_id}, total messages: {len(messages)}")
     if len(messages) == 0:
+        # TODO: I will probably do this when registering a new user instead
+        # TODO: Or when we create users using a python script (more like initialization script)
         with open(settings.BOT_INFO_PATH, "r", encoding="utf-8") as f:
             bots = json.load(f)
         for bot in bots:
