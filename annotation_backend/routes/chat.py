@@ -17,68 +17,67 @@ from prompts import BOT_PROMPTS
 
 router = APIRouter()
 
-@router.post("/chat", response_model=BotResponse)
-async def chat_endpoint(user_data: UserMessage, 
-                        current_user: str = Depends(get_current_user), 
-                        db: Session = Depends(get_db)):
-    """Send user's message to OpenRouter and return the model's response."""
-    # TODO: Let's probably disable (comment out) this if we are using streaming only.
-    user_id = current_user  # use authenticated user's ID instead of request body
-    if user_data:
-        print(f"[User {user_id}] to [{user_data.bot_id}]: {user_data.message}")
+# @router.post("/chat", response_model=BotResponse)
+# async def chat_endpoint(user_data: UserMessage, 
+#                         current_user: str = Depends(get_current_user), 
+#                         db: Session = Depends(get_db)):
+#     """Send user's message to OpenRouter and return the model's response."""
+#     user_id = current_user  # use authenticated user's ID instead of request body
+#     if user_data:
+#         print(f"[User {user_id}] to [{user_data.bot_id}]: {user_data.message}")
 
-    # # Store user's message
-    user_message = Message(
-        id=str(uuid4()),
-        user_id=user_id,
-        bot_id=user_data.bot_id,
-        sender="user",
-        text=user_data.message,
-    )
-    db.add(user_message)
-    db.commit()
+#     # # Store user's message
+#     user_message = Message(
+#         id=str(uuid4()),
+#         user_id=user_id,
+#         bot_id=user_data.bot_id,
+#         sender="user",
+#         text=user_data.message,
+#     )
+#     db.add(user_message)
+#     db.commit()
 
-    # Prepare API request
-    if not settings.OPENROUTER_API_KEY:
-        return BotResponse(response="Error: Missing OpenRouter API key.", message_id=str(uuid4()))
+#     # Prepare API request
+#     if not settings.OPENROUTER_API_KEY:
+#         return BotResponse(response="Error: Missing OpenRouter API key.", message_id=str(uuid4()))
 
-    system_prompt = BOT_PROMPTS[user_data.bot_id]
-    headers = {
-        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": settings.DEFAULT_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_data.message},
-        ],
-    }
+#     system_prompt = BOT_PROMPTS[user_data.bot_id]
+#     headers = {
+#         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+#         "Content-Type": "application/json",
+#     }
+#     payload = {
+#         "model": settings.DEFAULT_MODEL,
+#         "messages": [
+#             {"role": "system", "content": system_prompt},
+#             {"role": "user", "content": user_data.message},
+#         ],
+#     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(settings.OPENROUTER_URL, headers=headers, json=payload)
-        data = response.json()
+#     async with httpx.AsyncClient() as client:
+#         response = await client.post(settings.OPENROUTER_URL, headers=headers, json=payload)
+#         data = response.json()
 
-    if "choices" in data and len(data["choices"]) > 0:
-        reply = data["choices"][0]["message"]["content"]
-    else:
-        reply = "Sorry, I couldn't generate a response."
+#     if "choices" in data and len(data["choices"]) > 0:
+#         reply = data["choices"][0]["message"]["content"]
+#     else:
+#         reply = "Sorry, I couldn't generate a response."
 
-    # Create bot message ID
-    message_id = str(uuid4())
-    print(f"[Bot {user_data.bot_id}] to [{user_id}]: {reply} (Message ID: {message_id})")
+#     # Create bot message ID
+#     message_id = str(uuid4())
+#     print(f"[Bot {user_data.bot_id}] to [{user_id}]: {reply} (Message ID: {message_id})")
 
-    # Store bot message
-    bot_message = Message(
-        id=message_id,
-        user_id=user_id,
-        bot_id=user_data.bot_id,
-        sender="bot",
-        text=reply,
-    )
-    db.add(bot_message)
-    db.commit()
-    return BotResponse(response=reply, message_id=message_id)
+#     # Store bot message
+#     bot_message = Message(
+#         id=message_id,
+#         user_id=user_id,
+#         bot_id=user_data.bot_id,
+#         sender="bot",
+#         text=reply,
+#     )
+#     db.add(bot_message)
+#     db.commit()
+#     return BotResponse(response=reply, message_id=message_id)
 
 
 # Maintain cancel events per user (or per chat session)
