@@ -254,9 +254,8 @@ def feedback(req: FeedbackRequest,
              current_user: str = Depends(get_current_user),
              db: Session = Depends(get_db)):
     """Store feedback for a specific bot message."""
-    # TODO: should also filter by user_id to prevent cross-user feedback
     user_id = current_user
-    message = db.query(Message).filter_by(id=req.message_id).first()
+    message = db.query(Message).filter_by(id=req.message_id, user_id=user_id).first()
     if message:
         message.rating = req.rating
         message.comment = req.comment
