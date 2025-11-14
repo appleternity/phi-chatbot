@@ -41,7 +41,7 @@ export async function fetchBotStreamResponse(
   text: string,
   botId: string,
   onChunk: (chunk: string, messageId: string) => void,
-  controllerRef?: { current?: AbortController }
+  controllerRef?: React.MutableRefObject<AbortController | null>
 ): Promise<{ message_id: string; fullText: string }> {
   const token = getToken();
   const controller = new AbortController();

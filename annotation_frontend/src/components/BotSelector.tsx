@@ -3,7 +3,7 @@ import { BotProfile } from '../types/chat';
 
 interface BotSelectorProps {
   bots: BotProfile[];
-  activeBotId: string;
+  activeBotId: string | null;
   onSelectBot: (id: string) => void;
 }
 

@@ -22,6 +22,7 @@
     "noImplicitReturns": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"],
+  "include": ["src", "vite.config.ts"],
+  "types": ["vite/client"], /* for import.meta.env */
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -1,5 +1,4 @@
 import { BACKEND_URL } from "../config";
-import { BotProfile, ChatMessage } from '../types/chat';
 
 export async function fetchBots() {
   try {
