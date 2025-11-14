@@ -355,12 +355,6 @@ def ingest(
             --drop-existing
     """
     try:
-        # Security: Validate table name before using in SQL queries
-        # This prevents SQL injection since table names cannot use parameterized queries
-        # FIXME: This is the ingestion step, so we DO not need to validate the table_name
-        # FIXME: IT is likely we are creating new table names for testing
-        # table_name = validate_table_name(table_name)
-
         console.print(Panel.fit(
             "[bold cyan]Stage 2: Ingest Embeddings to Database[/bold cyan]\n\n"
             f"Input: {input}\n"
