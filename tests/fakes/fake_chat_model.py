@@ -6,10 +6,14 @@ providing 50-100x speedup and fully deterministic behavior.
 
 from typing import Any, List, Optional
 import json
+import re
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult, ChatGeneration
 from langchain_core.callbacks import CallbackManagerForLLMRun
+
+from tests.fakes.response_registry import RESPONSE_PATTERNS
 
 
 class FakeChatModel(BaseChatModel):
@@ -57,17 +61,13 @@ class FakeChatModel(BaseChatModel):
             # Supervisor classification - return PLAIN TEXT (emotional_support or rag_agent)
             # Extract the actual user message from the supervisor prompt
             # Format: "...User message: <actual message>\n\nRespond with ONLY..."
-            import re
             user_msg_match = re.search(r'user message:\s*(.+?)(?:\s*respond with only|$)', last_message, re.IGNORECASE | re.DOTALL)
             actual_message = user_msg_match.group(1).strip() if user_msg_match else last_message
 
-            # Check for emotional support keywords
-            emotional_keywords = ["anxious", "feeling", "depressed", "sad", "stressed", "worried", "emotional",
-                                 "upset", "down", "struggling", "need to talk", "need someone"]
-
-            # Check for medical/RAG keywords
-            medical_keywords = ["medication", "drug", "medicine", "treatment", "dose", "dosage",
-                               "side effect", "prescription", "antidepressant", "ssri", "what is"]
+            # Use keywords from response registry
+            supervisor_patterns = RESPONSE_PATTERNS["supervisor_classification"]
+            emotional_keywords = supervisor_patterns["emotional_keywords"]
+            medical_keywords = supervisor_patterns["medical_keywords"]
 
             # Return PLAIN TEXT agent name
             if any(keyword in actual_message for keyword in emotional_keywords):
@@ -76,32 +76,27 @@ class FakeChatModel(BaseChatModel):
                 agent_name = "rag_agent"
             else:
                 # Default to RAG agent for generic or medical queries
-                agent_name = "rag_agent"
+                agent_name = supervisor_patterns["default_agent"]
 
             response = AIMessage(content=agent_name)
 
         elif is_rag_classification:
             # RAG classification - return "retrieve" or "respond"
             # Extract the actual user message from the classification prompt
-            import re
             user_msg_match = re.search(r'user message:\s*"(.+?)"', last_message, re.IGNORECASE | re.DOTALL)
             actual_message = user_msg_match.group(1).strip() if user_msg_match else last_message
 
-            # Check for greeting/conversational keywords
-            greeting_keywords = ["thank", "thanks", "hello", "hi", "hey", "goodbye", "bye"]
-
-            # Check for medical keywords
-            medical_keywords = ["medication", "drug", "medicine", "treatment", "dose", "dosage",
-                               "side effect", "prescription", "antidepressant", "ssri", "what is",
-                               "how does", "tell me about", "aripiprazole", "sertraline", "lexapro"]
+            # Use keywords from response registry
+            rag_patterns = RESPONSE_PATTERNS["rag_classification"]
+            greeting_keywords = rag_patterns["greeting_keywords"]
+            medical_keywords = rag_patterns["medical_keywords"]
 
             # Classify (case-insensitive matching with word boundaries)
             actual_message_lower = actual_message.lower()
 
             # Use word boundary matching to avoid false positives (e.g., "hi" in "children")
-            import re as regex_module
             matched_greeting = any(
-                regex_module.search(r'\b' + re.escape(keyword) + r'\b', actual_message_lower)
+                re.search(r'\b' + re.escape(keyword) + r'\b', actual_message_lower)
                 for keyword in greeting_keywords
             )
             matched_medical = any(keyword in actual_message_lower for keyword in medical_keywords)
@@ -112,7 +107,7 @@ class FakeChatModel(BaseChatModel):
                 classification = "retrieve"
             else:
                 # Default to retrieve for safety
-                classification = "retrieve"
+                classification = rag_patterns["default"]
 
             response = AIMessage(content=classification)
 
@@ -127,104 +122,65 @@ class FakeChatModel(BaseChatModel):
             # Check what the query is about by looking at all messages
             all_msg_content = " ".join(str(msg.content).lower() for msg in messages if hasattr(msg, 'content'))
 
-            if "sertraline" in all_msg_content or "zoloft" in all_msg_content:
-                response = AIMessage(
-                    content="Based on the medical information: Sertraline (Zoloft) is a selective serotonin reuptake inhibitor (SSRI) antidepressant. "
-                           "It is commonly used to treat depression, anxiety disorders, OCD, PTSD, and panic disorder. "
-                           "The typical dosage ranges from 50-200mg daily. Common side effects may include nausea, insomnia, and dizziness. "
-                           "Always consult with a healthcare provider before starting or changing medication."
-                )
-            elif "bupropion" in all_msg_content or "wellbutrin" in all_msg_content:
-                response = AIMessage(
-                    content="Based on the medical information: Bupropion (Wellbutrin) is a norepinephrine-dopamine reuptake inhibitor (NDRI) antidepressant. "
-                           "It is used to treat depression and seasonal affective disorder, and also helps with smoking cessation. "
-                           "The typical dosage ranges from 150-300mg daily. Common side effects may include insomnia, dry mouth, and headache."
-                )
-            elif "aripiprazole" in all_msg_content:
-                response = AIMessage(
-                    content="Based on the medical information: Aripiprazole is an antipsychotic medication used for schizophrenia and bipolar disorder. "
-                           "For children, special dosing considerations apply. Always consult a pediatric psychiatrist for proper dosing and monitoring."
-                )
-            elif "antidepressant" in all_msg_content:
-                response = AIMessage(
-                    content="Antidepressants are medications used to treat depression and other mood disorders. "
-                           "Common types include SSRIs (like Sertraline), SNRIs, and NDRIs (like Bupropion). "
-                           "They work by adjusting neurotransmitter levels in the brain. Always work with a healthcare provider to find the right treatment."
-                )
-            elif "side effect" in all_msg_content:
-                response = AIMessage(
-                    content="Common side effects of antidepressants can include nausea, changes in appetite, sleep disturbances, and dizziness. "
-                           "Most side effects are temporary and diminish as your body adjusts. If you experience severe or persistent side effects, "
-                           "contact your healthcare provider."
-                )
-            else:
-                response = AIMessage(
-                    content="I can provide information about medications and mental health treatments based on the retrieved medical information. "
-                           "What specific medication or treatment would you like to know about?"
-                )
+            # Use medical responses from response registry
+            medical_responses = RESPONSE_PATTERNS["medical_responses"]
+
+            # Check for medication keywords in priority order
+            response_content = None
+            for keyword, response_text in medical_responses.items():
+                if keyword != "default" and keyword in all_msg_content:
+                    response_content = response_text
+                    break
+
+            # Default response if no specific match
+            if response_content is None:
+                response_content = medical_responses["default"]
+
+            response = AIMessage(content=response_content)
 
         # Check if this is emotional support context
         elif any("empathetic" in str(msg.content).lower() or "emotional support" in str(msg.content).lower()
                  for msg in messages if hasattr(msg, 'content')):
-            # Emotional support responses
-            if "anxious" in last_message or "anxiety" in last_message:
-                response = AIMessage(
-                    content="I understand that you're feeling anxious, and I want you to know that your feelings are completely valid. "
-                           "Anxiety can be overwhelming, but you're not alone in this. Would you like to talk more about what's been causing you stress?"
-                )
-            elif "depressed" in last_message or "sad" in last_message:
-                response = AIMessage(
-                    content="I hear that you're feeling down, and I'm really sorry you're going through this. "
-                           "It's important to acknowledge these feelings. Remember that it's okay to not be okay sometimes. "
-                           "I'm here to listen and support you."
-                )
-            else:
-                response = AIMessage(
-                    content="I understand you're going through a difficult time. It's completely normal to feel this way. "
-                           "I'm here to listen and support you. What's been on your mind?"
-                )
+            # Emotional support responses - use response registry
+            emotional_responses = RESPONSE_PATTERNS["emotional_responses"]
+
+            # Check for emotional keywords
+            response_content = None
+            for keyword, response_text in emotional_responses.items():
+                if keyword != "default" and keyword in last_message:
+                    response_content = response_text
+                    break
+
+            # Default response if no specific match
+            if response_content is None:
+                response_content = emotional_responses["default"]
+
+            response = AIMessage(content=response_content)
 
         # Keep the original RAG check for backward compatibility
         elif any("medical" in str(msg.content).lower()
                  for msg in messages if hasattr(msg, 'content')):
             # RAG agent responses - simulate retrieval-augmented generation
-            if "sertraline" in last_message or "zoloft" in last_message:
-                response = AIMessage(
-                    content="Based on the medical information: Sertraline (Zoloft) is a selective serotonin reuptake inhibitor (SSRI) antidepressant. "
-                           "It is commonly used to treat depression, anxiety disorders, OCD, PTSD, and panic disorder. "
-                           "The typical dosage ranges from 50-200mg daily. Common side effects may include nausea, insomnia, and dizziness. "
-                           "Always consult with a healthcare provider before starting or changing medication."
-                )
-            elif "bupropion" in last_message or "wellbutrin" in last_message:
-                response = AIMessage(
-                    content="Based on the medical information: Bupropion (Wellbutrin) is a norepinephrine-dopamine reuptake inhibitor (NDRI) antidepressant. "
-                           "It is used to treat depression and seasonal affective disorder, and also helps with smoking cessation. "
-                           "The typical dosage ranges from 150-300mg daily. Common side effects may include insomnia, dry mouth, and headache."
-                )
-            elif "antidepressant" in last_message:
-                response = AIMessage(
-                    content="Antidepressants are medications used to treat depression and other mood disorders. "
-                           "Common types include SSRIs (like Sertraline), SNRIs, and NDRIs (like Bupropion). "
-                           "They work by adjusting neurotransmitter levels in the brain. Always work with a healthcare provider to find the right treatment."
-                )
-            elif "side effect" in last_message:
-                response = AIMessage(
-                    content="Common side effects of antidepressants can include nausea, changes in appetite, sleep disturbances, and dizziness. "
-                           "Most side effects are temporary and diminish as your body adjusts. If you experience severe or persistent side effects, "
-                           "contact your healthcare provider."
-                )
-            else:
-                response = AIMessage(
-                    content="I can provide information about medications and mental health treatments. "
-                           "What specific medication or treatment would you like to know about?"
-                )
+            # Use medical responses from response registry
+            medical_responses = RESPONSE_PATTERNS["medical_responses"]
+
+            # Check for medication keywords
+            response_content = None
+            for keyword, response_text in medical_responses.items():
+                if keyword != "default" and keyword in last_message:
+                    response_content = response_text
+                    break
+
+            # Default response if no specific match
+            if response_content is None:
+                response_content = medical_responses["default"]
+
+            response = AIMessage(content=response_content)
 
         # Default response
         else:
-            response = AIMessage(
-                content="I'm here to help with medical questions and emotional support. "
-                       "How can I assist you today?"
-            )
+            default_responses = RESPONSE_PATTERNS["default_responses"]
+            response = AIMessage(content=default_responses["general"])
 
         generation = ChatGeneration(message=response)
         return ChatResult(generations=[generation])

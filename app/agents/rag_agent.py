@@ -12,9 +12,9 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
 
-from app.agents.base import create_llm
 from app.config import settings
 from app.graph.state import MedicalChatState
+from app.llm import internal_llm, response_llm
 from app.retrieval import AdvancedRetriever, RerankRetriever, SimpleRetriever
 from app.utils.prompts import (
     RAG_AGENT_PROMPT,
@@ -103,10 +103,6 @@ def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetr
     Returns:
         Compiled StateGraph ready for integration
     """
-    # Create LLMs
-    llm_classify = create_llm(temperature=0.1, disable_streaming=True, tags=["internal-llm"])  # Low temp for consistent classification
-    llm_generate = create_llm(temperature=1.0)  # Higher temp for creative responses
-
     async def classify_intent(state: MedicalChatState) -> dict:
         """Classify user intent to route to retrieval or direct response.
 
@@ -126,7 +122,7 @@ def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetr
         # Use classification prompt from centralized prompts module
         prompt = RAG_CLASSIFICATION_PROMPT.format(message=last_message.content)
 
-        response = await llm_classify.ainvoke([HumanMessage(content=prompt)])
+        response = await internal_llm.ainvoke([HumanMessage(content=prompt)])
         intent = normalize_llm_output(response.content)
 
         # Validate and default to retrieve if unclear
@@ -190,7 +186,7 @@ def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetr
 
         # 3. Build prompt with retrieved context
         system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
-        context_msg = AIMessage(
+        context_msg = HumanMessage(
             content=RAG_CONTEXT_TEMPLATE.format(
                 formatted_docs=formatted_docs,
                 conversation_history=conversation_history,
@@ -199,7 +195,7 @@ def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetr
         )
 
         # 4. Single LLM call to synthesize answer
-        response = await llm_generate.ainvoke([system_msg, context_msg])
+        response = await response_llm.ainvoke([system_msg, context_msg])
 
         logger.info(f"Session {session_id}: Generated response with retrieval")
         return Command(goto=END, update={"messages": [response]})
@@ -229,14 +225,14 @@ def create_rag_agent(retriever: SimpleRetriever | RerankRetriever | AdvancedRetr
         # Build conversational prompt
         conversation_history = _format_conversation_history(state["messages"])
         system_msg = SystemMessage(content=RAG_AGENT_PROMPT)
-        context_msg = AIMessage(
+        context_msg = HumanMessage(
             content=RAG_CONVERSATIONAL_TEMPLATE.format(
                 conversation_history=conversation_history
             )
         )
 
         # Generate conversational response
-        response = await llm_generate.ainvoke([system_msg, context_msg])
+        response = await response_llm.ainvoke([system_msg, context_msg])
 
         logger.info(f"Session {session_id}: Generated response without retrieval")
         return Command(goto=END, update={"messages": [response]})

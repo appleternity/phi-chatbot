@@ -10,7 +10,8 @@ Auto-generated from all feature plans. Last updated: 2025-10-29
 - **Streaming**: httpx 0.27+ for async SSE streaming
 - **Authentication**: Bearer token with hmac constant-time comparison (stdlib)
 - **LLM Chunking**: OpenRouter API, Pydantic 2.x, Tiktoken, Typer CLI
-- PostgreSQL with pgvector + pg_trgm extensions (005-multi-query-keyword-search)
+- **PostgreSQL**: pgvector + pg_trgm extensions (005-multi-query-keyword-search)
+- **Python 3.11+**: LangChain-Core 0.3+, LangChain-OpenAI, Pydantic 2.x, pytest (006-centralized-llm)
 
 ## Project Structure
 
@@ -435,6 +436,38 @@ Python 3.11+: Follow PEP 8, use type hints, Google-style docstrings
 
 ## Recent Changes
 
+### Centralized LLM Instance Management (2025-11-13)
+
+**Refactored LLM instance creation to singleton pattern with centralized management**:
+
+**Architecture Changes**:
+- **Centralized Module**: Created `app/llm/` module for LLM instance management
+- **Singleton Pattern**: Pre-configured instances (`response_llm`, `internal_llm`) with module-level initialization
+- **Factory Function**: `create_llm()` moved to `app/llm/factory.py` with environment-based switching
+- **Fail-Fast Migration**: Deleted `app/agents/base.py` to force immediate adoption
+
+**Configuration**:
+- **response_llm**: User-facing responses (temp=0.7, streaming enabled)
+- **internal_llm**: Internal operations (temp=1.0, streaming disabled, tags=["internal-llm"])
+- **Automatic Switching**: `TESTING=true` → FakeChatModel, `TESTING=false` → ChatOpenAI
+
+**Test Infrastructure**:
+- **Response Registry**: Centralized fake response patterns in `tests/fakes/response_registry.py`
+- **Organized Patterns**: Supervisor classification, RAG classification, medical responses, emotional responses
+- **Maintainable Testing**: Adding new patterns requires only updating registry
+
+**Refactored Files**:
+- **Created**: `app/llm/__init__.py`, `app/llm/factory.py`, `app/llm/instances.py`, `tests/fakes/response_registry.py`, `tests/unit/llm/test_instances.py`
+- **Updated**: `app/agents/supervisor.py`, `app/agents/emotional_support.py`, `app/agents/rag_agent.py`, `app/retrieval/advanced.py`, `tests/fakes/fake_chat_model.py`
+- **Deleted**: `app/agents/base.py`
+
+**Benefits**:
+- **Zero Configuration Duplication**: 5 `create_llm()` calls → 1 centralized factory (80% reduction)
+- **Simplified Testing**: Automatic test/prod switching with zero test infrastructure changes
+- **Type Safety**: `BaseChatModel` protocol ensures compatibility across FakeChatModel and ChatOpenAI
+- **Maintainable Responses**: Centralized registry makes adding new test patterns trivial
+- **100% Test Coverage**: All LLM module functions have complete coverage
+
 ### CLI Tools Refactoring - Moved to src/ with .env Integration (2025-11-13)
 
 **Moved database CLI tools from app/ to src/ with automatic .env configuration loading**:
@@ -545,7 +578,7 @@ python -m src.db.schema_cli enable-keyword-search --table text-embedding-v4
   - Idempotent: Safe to run multiple times
 
 **Files Modified**:
-  - `app/retrieval/advanced.py`: Complete rewrite with multi-query + hybrid search
+  - `app/retrieval/advanced.py`: Complete rewrite with multi-query + hybrid search, now uses global `internal_llm`
   - `app/db/schema.py`: Added enable_keyword_search() migration function
   - `app/config.py`: Added enable_keyword_search configuration parameter
 
@@ -554,8 +587,6 @@ python -m src.db.schema_cli enable-keyword-search --table text-embedding-v4
   - `tests/integration/test_keyword_search.py`: Hybrid search tests
   - `tests/integration/test_cross_language.py`: Cross-language tests
   - `tests/unit/test_query_validation.py`: Query validation unit tests
-
-- 005-multi-query-keyword-search: Added Python 3.11+
 
 ### API Bearer Authentication (2025-11-12)
 

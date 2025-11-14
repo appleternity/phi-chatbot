@@ -15,7 +15,7 @@ from app.db.connection import DatabasePool
 from app.retrieval.utils import extract_retrieval_query, format_conversation_context
 from app.embeddings import EmbeddingProvider
 from app.core.qwen3_reranker import Qwen3Reranker
-from app.agents.base import create_llm
+from app.llm import internal_llm
 
 from app.config import settings
 
@@ -36,7 +36,9 @@ class AdvancedRetriever:
         pool: Database connection pool
         encoder: Embedding provider (local/cloud)
         reranker: Qwen3-Reranker for scoring
-        llm: LLM for query expansion
+
+    Note:
+        Uses global internal_llm singleton for query expansion.
     """
 
     def __init__(
@@ -63,7 +65,6 @@ class AdvancedRetriever:
         self.reranker = reranker
         self.table_name = table_name
         self.max_queries = max_queries
-        self.llm = create_llm(temperature=1.0, disable_streaming=True, tags=["internal-llm"])
 
         logger.info(
             f"AdvancedRetriever initialized "
@@ -149,7 +150,7 @@ serotonin 5-HT2A receptor
 Generate queries:"""
 
         # Generate variations with LLM
-        response = self.llm.invoke([{"role": "user", "content": expansion_prompt}])
+        response = internal_llm.invoke([{"role": "user", "content": expansion_prompt}])
         response_text = response.content
 
         # Parse response - simple newline split
