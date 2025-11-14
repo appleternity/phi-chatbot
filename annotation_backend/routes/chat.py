@@ -281,34 +281,10 @@ def get_chat_history(user_id: str = Depends(get_current_user), db: Session = Dep
             .order_by(Message.created_at.asc())
             .all()
         )
+        print(f"Fetched chat history for user: {user_id}, total messages: {len(messages)}")
     except Exception as e:
         print(f"Error fetching chat history for user {user_id}: {e}\n-----\n")
         messages = []
-
-    print(f"Fetched chat history for user: {user_id}, total messages: {len(messages)}")
-    if len(messages) == 0:
-        # TODO: I will probably do this when registering a new user instead
-        # TODO: Or when we create users using a python script (more like initialization script)
-        with open(settings.BOT_INFO_PATH, "r", encoding="utf-8") as f:
-            bots = json.load(f)
-        for bot in bots:
-            welcome_message = Message(
-                id=str(uuid4()),
-                user_id=user_id,
-                bot_id=bot["id"],
-                sender="bot",
-                text=bot["welcome_message"],
-            )
-            db.add(welcome_message)
-            print('Add welcome message:', welcome_message.text)
-        db.commit()
-        messages = (
-            db.query(Message)
-            .filter(Message.user_id == user_id)
-            .order_by(Message.created_at.asc())
-            .all()
-        )
-        print(f"Initialized welcome messages for user: {user_id}")
 
     return [
         {

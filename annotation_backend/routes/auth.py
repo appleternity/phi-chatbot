@@ -1,10 +1,13 @@
+import json
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from schemas.user import RegisterRequest, LoginRequest
-from db.models import User
+from db.models import User, Message
 from db.base import get_db
 from core.security import hash_password, verify_password, create_access_token
+from core.config import settings
 
 router = APIRouter(tags=["Auth"])
 
@@ -20,6 +23,21 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
     print(f"User registered: {new_user.username} (ID: {new_user.id})")
+
+    with open(settings.BOT_INFO_PATH, "r", encoding="utf-8") as f:
+        bots = json.load(f)
+    for bot in bots:
+        welcome_message = Message(
+            id=str(uuid4()),
+            user_id=new_user.id,
+            bot_id=bot["id"],
+            sender="bot",
+            text=bot["welcome_message"],
+        )
+        db.add(welcome_message)
+        print('Add welcome message:', welcome_message.text)
+    db.commit()
+
     return {"user_id": new_user.id, "username": new_user.username}
 
 
