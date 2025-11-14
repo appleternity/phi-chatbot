@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { BotProfile, ChatMessage } from '../types/chat';
 import ChatWindow from '../components/ChatWindow';
 import BotSelector from '../components/BotSelector';
 import { fetchBotResponse, fetchBotStreamResponse, sendFeedback, getChatHistory } from '../services/chatService';
 import { getToken, logout } from "../services/authService";
-import { fetchBots, createInitialHistories } from '../services/botService';
+import { fetchBots } from '../services/botService';
 
 
 export default function ChatPage() {
@@ -15,13 +15,13 @@ export default function ChatPage() {
   const [isBotLoading, setIsBotLoading] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const navigate = useNavigate();
+  const controllerRef = useRef<{ current?: AbortController }>({ current: undefined });
 
   useEffect(() => {
     fetchBots().then((data) => {
       if (data.bots && data.bots.length > 0) {
         setBots(data.bots);
         setActiveBotId(data.bots[0]?.id || null);
-        setChatHistories(createInitialHistories(data.bots));
       } else {
         console.error("No bots found.");
       }
@@ -68,13 +68,6 @@ export default function ChatPage() {
     }));
 
     setIsBotLoading(true);
-    // const controllerRef = { current: undefined as AbortController | undefined };
-
-    // cancel previous ongoing stream (if any)
-    // if (controllerRef.current) controllerRef.current.abort();
-
-    const newControllerRef = { current: undefined as AbortController | undefined };
-    // controllerRef.current = newControllerRef.current;
     let isFirstChunk = true;
 
     try {
@@ -103,12 +96,21 @@ export default function ChatPage() {
             [activeBotId!]: [...prev[activeBotId!], newBubble],
           }));
         },
-        newControllerRef
+        controllerRef
       );
 
     } catch (err) {
       console.error("Streaming error:", err);
     } finally {
+      setIsBotLoading(false);
+      controllerRef.current = undefined;
+    }
+  };
+
+  const handleStopStreaming = () => {
+    if (controllerRef.current) {
+      controllerRef.current.abort();
+      controllerRef.current = undefined;
       setIsBotLoading(false);
     }
   };
@@ -182,6 +184,7 @@ export default function ChatPage() {
           onReturn={() => setIsChatOpen(false)}
           onRateMessage={handleRateMessage}
           onSubmitComment={handleSubmitComment}
+          onStopStreaming={handleStopStreaming}
         />
       </div>
     </div>

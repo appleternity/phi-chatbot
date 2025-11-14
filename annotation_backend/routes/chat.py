@@ -3,7 +3,7 @@ import json
 import httpx
 import asyncio
 from uuid import uuid4
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -87,9 +87,12 @@ async def chat_endpoint(user_data: UserMessage,
 cancel_events: dict[str, asyncio.Event] = {}
 
 @router.post("/chat/stream")
-async def chat_stream(user_data: UserMessage, 
-                      current_user: str = Depends(get_current_user), 
-                      db: Session = Depends(get_db)):
+async def chat_stream(
+    user_data: UserMessage,
+    request: Request,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Stream response from OpenRouter and handle user interruption."""
     user_id = current_user
     if user_data:
@@ -159,8 +162,16 @@ async def chat_stream(user_data: UserMessage,
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream("POST", settings.OPENROUTER_URL, headers=headers, json=payload) as response:
                     async for chunk in response.aiter_text():
+                        # stop if another server-side cancel_event was set
                         if cancel_event.is_set():
-                            print(f"Stream cancelled for user {user_id}")
+                            print(f"Stream cancelled by server for user {user_id}")
+                            break
+
+                        # stop if client disconnected (frontend aborted the request)
+                        if await request.is_disconnected():
+                            print(f"Client disconnected for user {user_id} — stopping stream")
+                            # propagate cancel flag so other parts / future requests know
+                            cancel_event.set()
                             break
 
                         buffer += chunk
@@ -215,7 +226,10 @@ async def chat_stream(user_data: UserMessage,
         except Exception as e:
             print("Streaming error:", e)
         finally:
+            # ensure we remove the cancel event and signal cancellation
             cancel_events.pop(user_id, None)
+            # if client disconnected, try to persist any leftover buffered sentence (optional)
+            # flush buffer if necessary
             yield "[STREAM_END]\n"
             print(f"Stream closed for user={user_id}")
 

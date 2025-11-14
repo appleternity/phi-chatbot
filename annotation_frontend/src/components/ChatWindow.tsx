@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, User, SendHorizontal, ArrowLeft, ThumbsUp, ThumbsDown, Edit, X } from 'lucide-react';
+import { Bot, User, SendHorizontal, ArrowLeft, ThumbsUp, ThumbsDown, Edit, X, Square } from 'lucide-react';
 import { ChatMessage, BotProfile } from '../types/chat';
 
 interface ChatWindowProps {
@@ -10,6 +10,7 @@ interface ChatWindowProps {
   onReturn: () => void;
   onRateMessage: (id: string, rating: 'up' | 'down') => void;
   onSubmitComment: (id: string, comment: string) => void;
+  onStopStreaming: () => void;
 }
 
 export default function ChatWindow({
@@ -20,6 +21,7 @@ export default function ChatWindow({
   onReturn,
   onRateMessage,
   onSubmitComment,
+  onStopStreaming,
 }: ChatWindowProps) {
   const [message, setMessage] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -69,7 +71,7 @@ export default function ChatWindow({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 p-6 space-y-4 overflow-y-auto">  {/* whitespace-pre-wrap */}
+      <div className="flex-1 p-6 space-y-4 overflow-y-auto">
         {history.map((msg) => (
           <div key={msg.id} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
             <div className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -182,14 +184,26 @@ export default function ChatWindow({
             onChange={(e) => setMessage(e.target.value)}
             placeholder={`Message ${bot.name}...`}
             className="flex-1 border border-gray-300 rounded-full py-3 px-5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={isLoading}
           />
-          <button
-            type="submit"
-            disabled={!message.trim() || isLoading}
-            className="bg-blue-600 text-white rounded-full p-3 hover:bg-blue-700"
-          >
-            <SendHorizontal size={20} />
-          </button>
+          {isLoading ? (
+            <button
+              type="button"
+              onClick={onStopStreaming}
+              className="bg-red-600 text-white rounded-full p-3 hover:bg-red-700 transition"
+              title="Stop streaming"
+            >
+              <Square size={20} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!message.trim()}
+              className="bg-blue-600 text-white rounded-full p-3 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <SendHorizontal size={20} />
+            </button>
+          )}
         </form>
       </div>
     </div>

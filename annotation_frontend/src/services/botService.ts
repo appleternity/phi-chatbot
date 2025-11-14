@@ -14,17 +14,3 @@ export async function fetchBots() {
     return { bots: [] };
   }
 }
-
-export function createInitialHistories(bots: BotProfile[]): Record<string, ChatMessage[]> {
-  const result: Record<string, ChatMessage[]> = {};
-  bots.forEach(bot => {
-    result[bot.id] = [{
-      id: crypto.randomUUID(),
-      sender: 'bot',
-      text: bot.welcome_message,
-      rating: null,
-      comment: null,
-    }];
-  });
-  return result;
-}
