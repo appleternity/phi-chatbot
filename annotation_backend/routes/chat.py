@@ -14,8 +14,6 @@ from db.models import Message
 from core.config import settings
 from prompts import BOT_PROMPTS
 
-# TODO: Import this from settings will make it easier to track all env variables
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 router = APIRouter()
 
@@ -41,12 +39,12 @@ async def chat_endpoint(user_data: UserMessage,
     db.commit()
 
     # Prepare API request
-    if not OPENROUTER_API_KEY:
+    if not settings.OPENROUTER_API_KEY:
         return BotResponse(response="Error: Missing OpenRouter API key.", message_id=str(uuid4()))
 
     system_prompt = BOT_PROMPTS[user_data.bot_id]
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -115,7 +113,7 @@ async def chat_stream(
     db.commit()
 
     # Prepare request
-    if not OPENROUTER_API_KEY:
+    if not settings.OPENROUTER_API_KEY:
         return BotResponse(response="Error: Missing OpenRouter API key.", message_id=str(uuid4()))
 
     # Get history
@@ -141,7 +139,7 @@ async def chat_stream(
             messages.append({"role": "assistant", "content": msg.text})
 
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
     payload = {
