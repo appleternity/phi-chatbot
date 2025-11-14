@@ -17,16 +17,18 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
     e.preventDefault();
     setError("");
     try {
-      const user = isRegistering
-        ? await register(username, password)
-        : await login(username, password);
+      if (isRegistering) {
+        await register(username, password);
+        setIsRegistering(false);
+        setUsername("");
+        setPassword("");
+        return;
+      } 
+      
+      const user = await login(username, password);
       localStorage.setItem("user_id", user.user_id);
       localStorage.setItem("username", user.username);
-
-      // Notify parent component
-      onLoginSuccess?.();
-
-      // Navigate to chat
+      onLoginSuccess?.(); // Notify parent component
       navigate("/chat");
     } catch (err) {
       const errorMessage = (err as Error).message;
