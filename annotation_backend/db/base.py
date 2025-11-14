@@ -7,8 +7,6 @@ Base = declarative_base()
 engine = create_engine(settings.CHAT_DB_URL)
 SessionLocal = sessionmaker(bind=engine)
 
-Base.metadata.create_all(bind=engine)
-
 def get_db():
     db = SessionLocal()
     try:

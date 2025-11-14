@@ -1,0 +1,55 @@
+# -----------------------
+# Python caches
+# -----------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyd
+*.pkl
+
+# -----------------------
+# Environment files
+# -----------------------
+.env
+.env.*
+!.env.example
+
+# -----------------------
+# Virtual environments
+# -----------------------
+venv/
+env/
+.venv/
+
+# -----------------------
+# Logs
+# -----------------------
+*.log
+logs/
+*.sqlite3
+
+# -----------------------
+# Git
+# -----------------------
+.git
+.gitignore
+
+# -----------------------
+# Docker-related files
+# -----------------------
+Dockerfile
+docker-compose*
+.dockerignore
+
+# -----------------------
+# OS / editor junk
+# -----------------------
+.DS_Store
+Thumbs.db
+
+# -----------------------
+# Project build artifacts
+# -----------------------
+dist/
+build/
